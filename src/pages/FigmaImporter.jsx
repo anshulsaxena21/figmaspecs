@@ -479,7 +479,9 @@ export default function FigmaImporter({ session, onSignOut }) {
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
       for(let i=0;i<(design.assets||[]).length;i++){const asset=design.assets[i];if(!asset.url)continue;try{const response=await fetch(asset.url);if(!response.ok)continue;const bytes=new Uint8Array(await response.arrayBuffer());files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+(asset.name||("asset-"+(i+1))),data:bytes});}catch(err){console.warn("Asset skipped",asset.name,err);}}
       const safe=(design.name||"figma-project").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"figma-project";
-      const bundle = zipBlob(files);\n      if (uploadToGithub) await uploadZipToGithub(bundle);\n      else saveBlob(safe+"-bundle.zip",bundle);
+      const bundle = zipBlob(files);
+      if (uploadToGithub) await uploadZipToGithub(bundle);
+      else saveBlob(safe+"-bundle.zip",bundle);
     }catch(err){setError("ZIP export failed: "+(err.message||"Unknown error"));}
     finally{setLoading(false);}
   }
