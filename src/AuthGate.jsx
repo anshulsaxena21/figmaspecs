@@ -11,9 +11,10 @@ export default function AuthGate({ children }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, next) => { if (event === "PASSWORD_RECOVERY") setMode("update-password"); setSession(next); });
     return () => subscription.unsubscribe();
   }, []);
   async function submit(e) {
@@ -36,6 +37,7 @@ export default function AuthGate({ children }) {
     finally { setBusy(false); }
   }
   if (!ready) return <div className="auth-loading">Loading your secure workspace…</div>;
+  if (session && mode === "update-password") return <main className="auth-shell"><section className="auth-card"><div className="auth-brand"><span><Figma size={22}/></span><b>FigmaSpecs</b></div><h1>Set a new password</h1><p>Choose a new password for your account.</p><form onSubmit={async e=>{e.preventDefault();setBusy(true);setMessage("");try{const {error}=await supabase.auth.updateUser({password:newPassword});if(error)throw error;setMessage("Password updated successfully.");setMode("signin");await supabase.auth.signOut();}catch(err){setMessage(err.message);}finally{setBusy(false);}}}><label>New password<div className="auth-input"><LockKeyhole size={17}/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} minLength={8} required autoComplete="new-password"/></div></label>{message&&<div className="auth-message">{message}</div>}<button disabled={busy}>{busy?"Updating…":"Update password"} <ArrowRight size={17}/></button></form></section></main>;
   if (session) return <>{React.cloneElement(children, { session, onSignOut: () => supabase.auth.signOut() })}</>;
   return <main className="auth-shell"><section className="auth-card">
     <div className="auth-brand"><span><Figma size={22}/></span><b>FigmaSpecs</b></div>
