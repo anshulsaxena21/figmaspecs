@@ -376,12 +376,12 @@ export default function FigmaImporter({ session, onSignOut }) {
     try {
       const { data: userData, error: userError } = await supabase.auth.getUser();
       if (userError || !userData.user) throw new Error("Please sign in again.");
-      const row = { user_id: userData.user.id, name: design.name || "Untitled Figma project", design_data: design.document, assets: design.assets || [], stats: design.stats || {}, updated_at: new Date().toISOString() };
+      const row = { user_id: userData.user.id, name: design.name || "Untitled Figma project", design_data: design.document, assets: design.assets || [], stats: { ...(design.stats || {}), fileKey: design.fileKey || parseFigmaUrl(figmaUrl).fileKey }, updated_at: new Date().toISOString() };
       const { error: saveError } = await supabase.from("figma_user_projects").insert(row);
       if (saveError) throw saveError;
       const { data, error: listError } = await supabase.from("figma_user_projects").select("id,name,design_data,assets,stats,created_at,updated_at").order("updated_at", { ascending: false });
       if (listError) throw listError;
-      setSavedProjects((data || []).map(item => ({ id: item.id, name: item.name, savedAt: item.updated_at || item.created_at, design: { name: item.name, document: item.design_data, assets: item.assets || [], stats: item.stats || {} } })));
+      setSavedProjects((data || []).map(item => ({ id: item.id, name: item.name, savedAt: item.updated_at || item.created_at, design: { name: item.name, document: item.design_data, assets: item.assets || [], stats: item.stats || {}, fileKey: item.stats?.fileKey || null } })));
       setSaveStatus("Saved securely to your account.");
     } catch (err) { setSaveStatus(""); setError("Could not save project: " + err.message); }
   }
