@@ -241,7 +241,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       if (!tokenStatus.hasToken) { setShowSettings(true); throw new Error("Connect your Figma personal access token in Connection settings first."); }
       const { fileKey, nodeId } = parseFigmaUrl(figmaUrl);
       const payload = await callFigmaFunction({ fileKey, nodeId });
-      setDesign(payload);
+      setDesign({ ...payload, fileKey });
       const root = payload.document?.children?.[0] || payload.document;
       if (root?.id) setSelected(root.id);
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
@@ -263,15 +263,22 @@ export default function FigmaImporter({ session, onSignOut }) {
   function exportTokens() { downloadText("figma-tokens.css", cssTokens(allNodes), "text/css"); }
   async function getFreshExportAssets() {
     const assets = design?.assets || [];
-    const stored = assets.filter(asset => asset.path && asset.stored);
-    if (!stored.length) return assets;
-    const result = await callFigmaFunction({ action: "refresh_asset_urls", assets: stored.map(({nodeId,path,name,format})=>({nodeId,path,name,format})) });
-    const refreshed = new Map((result.assets || []).filter(asset=>asset.url).map(asset=>[asset.nodeId,asset]));
-    return assets.map(asset => {
-      const fresh = refreshed.get(asset.nodeId);
-      if (asset.path && asset.stored && !fresh) throw new Error("Could not retrieve stored image/vector asset: " + (asset.name || asset.nodeId) + ". Please re-import the Figma file to restore this asset.");
-      return fresh ? { ...asset, ...fresh, stored: true } : asset;
+    if (!assets.length) return [];
+    const fileKey = design?.fileKey || parseFigmaUrl(figmaUrl).fileKey;
+    const result = await callFigmaFunction({
+      action: "export_assets",
+      fileKey,
+      assets: assets.map(({nodeId,name,format})=>({nodeId,name,format}))
     });
+    const refreshed = new Map((result.assets || []).filter(asset=>asset.url && !asset.error).map(asset=>[asset.nodeId,asset]));
+    const missing = assets.filter(asset=>!refreshed.has(asset.nodeId));
+    if (missing.length) {
+      const details=(result.assets||[]).filter(asset=>asset.error).map(asset=>asset.name+": "+asset.error).join("; ");
+      throw new Error("Could not retrieve all Figma images and vectors ("+missing.length+" missing). "+(details||"Re-import the Figma design and try again."));
+    }
+    const ordered = assets.map(asset=>({...asset,...refreshed.get(asset.nodeId),stored:true}));
+    setDesign(current=>current?({...current,assets:ordered}):current);
+    return ordered;
   }
 
   async function exportReact() {
@@ -345,10 +352,14 @@ export default function FigmaImporter({ session, onSignOut }) {
         {name:"README.md",data:"# React + CSS export\n\nCopy the code and assets folders into your React app. FigmaExport.jsx imports FigmaExport.css. Image fills use relative paths under assets. React must be installed in the target project.\n"}
       ];
       for(let i=0;i<assets.length;i++){
-        const asset=assets[i];if(!asset.url)continue;
-        try{const response=await fetch(asset.url);if(!response.ok)throw new Error("HTTP "+response.status);const bytes=new Uint8Array(await response.arrayBuffer());files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+(i+1)+"-"+safeFileName(asset.name,"asset"+(asset.format==="svg"?".svg":".png")),data:bytes});}
-        catch(err){console.warn("React export skipped asset",asset.name,err);}
+        const asset=assets[i];
+        if(!asset.url) throw new Error("Missing URL for image/vector "+asset.name);
+        const response=await fetch(asset.url);
+        if(!response.ok) throw new Error("Could not download "+asset.name+" (HTTP "+response.status+").");
+        const bytes=new Uint8Array(await response.arrayBuffer());
+        files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+String(i+1).padStart(3,"0")+"-"+safeFileName(asset.name,"asset"+(asset.format==="svg"?".svg":".png")),data:bytes});
       }
+      files.push({name:"assets/asset-manifest.json",data:JSON.stringify(assets,null,2)});
       const projectName=safeFileName(design.name,"figma-project").replace(/\.[^.]+$/,"");
       saveBlob(projectName+"-react-css.zip",zipBlob(files));
       setSaveStatus("React + CSS bundle downloaded");
@@ -600,6 +611,11 @@ export default function FigmaImporter({ session, onSignOut }) {
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
       const exportAssets = await getFreshExportAssets();
+      files.find(file=>file.name==="assets/asset-manifest.json").data=JSON.stringify(exportAssets,null,2);
+      files.find(file=>file.name==="design-data/complete-design.json").data=JSON.stringify({...design,assets:exportAssets},null,2);
+      const docsWithAssets=describeLayers(design.document,exportAssets);
+      files.find(file=>file.name==="design-data/layer-descriptions.json").data=JSON.stringify(docsWithAssets,null,2);
+      files.find(file=>file.name==="design-data/layer-descriptions.csv").data=[keys.join(","),...docsWithAssets.map(row=>keys.map(k=>csvEscape(row[k])).join(","))].join("\n");
       let downloadedAssets = 0;
       for(let i=0;i<exportAssets.length;i++){
         const asset=exportAssets[i];
