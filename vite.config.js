@@ -1,0 +1,21 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
+
+export default defineConfig({
+  plugins: [react()],
+  base: "/px-new-pages/",
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(process.cwd(), "index.html"),
+        parcelxIQ: resolve(process.cwd(), "parcelx-iq.html"),
+        parcelxIQProduct: resolve(process.cwd(), "parcelx-iq-product.html"),
+        parcelxIQDemo: resolve(process.cwd(), "parcelx-iq-demo.html"),
+        amazonSelfShip: resolve(process.cwd(), "amazon-self-ship.html"),
+        knowledgeBase: resolve(process.cwd(), "knowledge-base.html"),
+        figmaImporter: resolve(process.cwd(), "figma-importer.html")
+      }
+    }
+  }
+});
