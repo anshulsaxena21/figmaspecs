@@ -509,11 +509,19 @@ export default function FigmaImporter({ session, onSignOut }) {
     if (refResponse.ok) {
       const ref = await refResponse.json();
       baseCommit = await request(api + "/git/commits/" + ref.object.sha);
-    } else if ((refResponse.status === 404 || refResponse.status === 409) && Number(repoInfo.size || 0) === 0) {
-      baseCommit = null;
     } else {
       const refError = await refResponse.json().catch(() => ({}));
-      throw new Error(refResponse.status === 404 ? "Branch '" + branch + "' was not found. Choose the repository's default branch." : (refError.message || "Could not read the destination branch."));
+      const refMessage = String(refError.message || "");
+      const isEmptyRepository = /git repository is empty|repository is empty|no commits yet/i.test(refMessage)
+        || (refResponse.status === 404 && Number(repoInfo.size || 0) === 0)
+        || refResponse.status === 409;
+      if (isEmptyRepository) {
+        baseCommit = null;
+      } else if (refResponse.status === 404) {
+        throw new Error("Branch '" + branch + "' was not found. Choose the repository's default branch. GitHub says: " + (refMessage || "Reference not found."));
+      } else {
+        throw new Error(refMessage || "Could not read the destination branch (HTTP " + refResponse.status + ").");
+      }
     }
     const entries = [];
     setGithubProgress({ active: true, stage: "Uploading individual files", current: 0, total: files.length, percent: 8, fileName: "" });
