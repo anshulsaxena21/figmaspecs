@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase, SUPABASE_PUBLISHABLE_KEY } from "../lib/supabase";
-import { Activity, ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, ChevronRight, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Github, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Box, Check, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Github, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
 
 const PROJECT_URL = "https://ovdxipfxychotaspfccl.supabase.co";
 const FUNCTION_URL = PROJECT_URL + "/functions/v1/figma-import";
