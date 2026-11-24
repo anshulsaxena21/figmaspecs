@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { supabase, SUPABASE_PUBLISHABLE_KEY } from "../lib/supabase";
 import { Activity, ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, ChevronRight, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
 
 const PROJECT_URL = "https://ovdxipfxychotaspfccl.supabase.co";
 const FUNCTION_URL = PROJECT_URL + "/functions/v1/figma-import";
-const DEFAULT_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_VQdW48kuUKdUigExZZnwDA_SuEa5Qce";
 
 
-const PROJECT_DB_NAME = "parcelx-figma-studio";
+let PROJECT_DB_NAME = "figmaspecs-guest";
 const PROJECT_STORE = "saved-projects";
 function openProjectDB() {
   return new Promise((resolve, reject) => {
@@ -135,11 +135,13 @@ function zipBlob(files){
 }
 function saveBlob(name,blob){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 
-export default function FigmaImporter() {
+export default function FigmaImporter({ session, onSignOut }) {
   const [figmaUrl, setFigmaUrl] = useState("");
   const [token, setToken] = useState("");
-  const [supabaseKey, setSupabaseKey] = useState(DEFAULT_KEY);
   const [showSettings, setShowSettings] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [tokenStatus, setTokenStatus] = useState({ hasToken: false, expiresAt: null, retentionDays: null });
+  const [tokenSaving, setTokenSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [design, setDesign] = useState(null);
@@ -153,28 +155,48 @@ export default function FigmaImporter() {
   const [storageReady, setStorageReady] = useState(false);
   useEffect(() => {
     let alive = true;
+    PROJECT_DB_NAME = "figmaspecs-" + session.user.id;
     (async () => {
       try {
-        let legacy = [];
-        try { legacy = JSON.parse(localStorage.getItem("px-figma-projects") || "[]"); } catch {}
-        if (Array.isArray(legacy) && legacy.length) {
-          let migrationComplete = true;
-          for (const project of legacy) {
-            if (project?.id && project?.design?.document) {
-              try { await putSavedProject(project); }
-              catch (migrationError) { migrationComplete = false; console.warn("Legacy project migration skipped", migrationError); }
-            }
-          }
-          if (migrationComplete) { try { localStorage.removeItem("px-figma-projects"); } catch {} }
-        }
-        const items = await getSavedProjects();
-        if (alive) setSavedProjects(items);
-      } catch (err) {
-        if (alive) setError("Saved-project storage could not be opened: " + err.message);
-      } finally { if (alive) setStorageReady(true); }
+        const { data, error: dbError } = await supabase.from("figma_user_projects").select("id,name,design_data,assets,stats,created_at,updated_at").order("updated_at", { ascending: false });
+        if (dbError) throw dbError;
+        const projects = (data || []).map(row => ({ id: row.id, name: row.name, savedAt: row.updated_at || row.created_at, design: { name: row.name, document: row.design_data, assets: row.assets || [], stats: row.stats || {} } }));
+        if (alive) setSavedProjects(projects);
+      } catch (err) { if (alive) setError("Could not load your cloud projects: " + err.message); }
+      finally { if (alive) setStorageReady(true); }
     })();
+    callFigmaFunction({ action: "token_status" }).then(status => {
+      if (alive) { setTokenStatus(status); if (status.retentionDays) setRetentionDays(status.retentionDays); }
+    }).catch(err => { if (alive) setError("Could not check Figma connection: " + err.message); });
     return () => { alive = false; };
-  }, []);
+  }, [session.user.id]);
+
+  async function callFigmaFunction(body) {
+    const { data: { session: activeSession } } = await supabase.auth.getSession();
+    if (!activeSession?.access_token) throw new Error("Your session expired. Please sign in again.");
+    const response = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: "Bearer " + activeSession.access_token },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || "FigmaSpecs request failed.");
+    return payload;
+  }
+
+  async function saveFigmaToken() {
+    setTokenSaving(true); setError("");
+    try {
+      const result = await callFigmaFunction({ action: "save_token", figmaToken: token, retentionDays });
+      setToken(""); setTokenStatus({ hasToken: true, retentionDays, expiresAt: result.expiresAt || null });
+      setSaveStatus("Figma token connected securely."); setShowSettings(false);
+    } catch (err) { setError(err.message); }
+    finally { setTokenSaving(false); }
+  }
+  async function removeFigmaToken() {
+    try { await callFigmaFunction({ action: "delete_token" }); setTokenStatus({ hasToken: false }); setSaveStatus("Figma token removed."); }
+    catch (err) { setError(err.message); }
+  }
 
   const allNodes = useMemo(() => design ? walk([design.document]) : [], [design]);
   const selectedNode = selected ? allNodes.find((n) => n.id === selected) : null;
@@ -189,22 +211,15 @@ export default function FigmaImporter() {
   async function importDesign(e) {
     e?.preventDefault(); setError(""); setLoading(true); setDesign(null); setSelected(null);
     try {
-      if (!token.trim()) throw new Error("Add your Figma personal access token to continue.");
-      if (!supabaseKey.trim()) throw new Error("Add the Supabase publishable/anon key in connection settings.");
+      if (!tokenStatus.hasToken) { setShowSettings(true); throw new Error("Connect your Figma personal access token in Connection settings first."); }
       const { fileKey, nodeId } = parseFigmaUrl(figmaUrl);
-      const response = await fetch(FUNCTION_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: supabaseKey.trim() },
-        body: JSON.stringify({ fileKey, nodeId, figmaToken: token.trim() })
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || "Unable to read this Figma file.");
+      const payload = await callFigmaFunction({ fileKey, nodeId });
       setDesign(payload);
       const root = payload.document?.children?.[0] || payload.document;
       if (root?.id) setSelected(root.id);
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
     } catch (err) { setError(err.message || "Something went wrong while importing the design."); }
-    finally { setLoading(false); setToken(""); }
+    finally { setLoading(false); }
   }
 
   function exportAssets() {
@@ -306,19 +321,18 @@ export default function FigmaImporter() {
 
   async function saveCurrentProject() {
     if (!design?.document) { setError("Import a Figma design before saving."); return; }
-    setSaveStatus("Saving…"); setError("");
-    const entry = { id: design.importId || (globalThis.crypto?.randomUUID?.() || "px-" + Date.now()), name: design.name || "Untitled Figma project", savedAt: new Date().toISOString(), design };
+    setSaveStatus("Saving to your account…"); setError("");
     try {
-      await putSavedProject(entry);
-      setSavedProjects(await getSavedProjects());
-      setSaveStatus("Saved on this device · " + new Date(entry.savedAt).toLocaleTimeString());
-      window.setTimeout(() => setSaveStatus(current => current.startsWith("Saved on this device") ? "" : current), 5000);
-    } catch (err) {
-      setSaveStatus("");
-      setError("Could not save in browser storage: " + err.message + ". Downloading a backup instead.");
-      try { downloadText(safeFileName(entry.name, "figma-project") + "-backup.json", JSON.stringify(entry, null, 2), "application/json"); }
-      catch (backupError) { setError("Save failed: " + err.message + ". Backup download also failed: " + backupError.message); }
-    }
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) throw new Error("Please sign in again.");
+      const row = { user_id: userData.user.id, name: design.name || "Untitled Figma project", design_data: design.document, assets: design.assets || [], stats: design.stats || {}, updated_at: new Date().toISOString() };
+      const { error: saveError } = await supabase.from("figma_user_projects").insert(row);
+      if (saveError) throw saveError;
+      const { data, error: listError } = await supabase.from("figma_user_projects").select("id,name,design_data,assets,stats,created_at,updated_at").order("updated_at", { ascending: false });
+      if (listError) throw listError;
+      setSavedProjects((data || []).map(item => ({ id: item.id, name: item.name, savedAt: item.updated_at || item.created_at, design: { name: item.name, document: item.design_data, assets: item.assets || [], stats: item.stats || {} } })));
+      setSaveStatus("Saved securely to your account.");
+    } catch (err) { setSaveStatus(""); setError("Could not save project: " + err.message); }
   }
   function openSavedProject(project) {
     setDesign(project.design); setSelected(project.design.document?.children?.[0]?.id || project.design.document?.id || null);
@@ -326,8 +340,12 @@ export default function FigmaImporter() {
     setError(""); setSaveStatus("Opened saved project");
   }
   async function removeSavedProject(id) {
-    try { await deleteSavedProject(id); setSavedProjects(await getSavedProjects()); setSaveStatus("Saved project deleted"); }
-    catch (err) { setError("Could not delete saved project: " + err.message); }
+    try {
+      const { error: deleteError } = await supabase.from("figma_user_projects").delete().eq("id", id);
+      if (deleteError) throw deleteError;
+      setSavedProjects(items => items.filter(project => project.id !== id));
+      setSaveStatus("Saved project deleted");
+    } catch (err) { setError("Could not delete saved project: " + err.message); }
   }
 
   function exportLayerDocs() {
@@ -376,28 +394,28 @@ export default function FigmaImporter() {
     <header className="studio-topbar">
       <a className="studio-brand" href="./"><span className="brand-mark"><Figma size={19}/></span><span>Figma<b>Specs</b></span></a>
       <div className="topbar-center"><span className="live-dot"/> Design extraction workspace <span className="topbar-divider"/> <span className="free-label">FREE-TIER FRIENDLY</span></div>
-      <button className="icon-button" onClick={() => setShowSettings(v => !v)} title="Connection settings"><Settings2 size={18}/></button>
+      <div className="account-actions"><span className="account-email">{session.user.email}</span><button className="icon-button" onClick={() => setShowSettings(v => !v)} title="Figma connection settings"><Settings2 size={18}/></button><button className="signout-button" onClick={onSignOut}>Sign out</button></div>
     </header>
 
     <section className="studio-content">
       <div className="intro-row">
         <div><div className="eyebrow"><Sparkles size={13}/> FIGMA DESIGN INSPECTOR</div><h1>From Figma to <span>pixel-perfect code.</span></h1><p>Read the real design values, inspect every layer and export the assets your website needs.</p></div>
-        <div className="intro-chip"><LockKeyhole size={15}/> Your Figma token is used for this import only</div>
+        <div className="intro-chip"><LockKeyhole size={15}/> Private workspace · {tokenStatus.hasToken ? "Figma connected" : "Connect Figma to begin"}</div>
       </div>
 
       <form className="import-panel" onSubmit={importDesign}>
         <div className="import-heading"><div className="import-icon"><Figma size={21}/></div><div><strong>Import a Figma design</strong><small>Paste a design link. Choose a frame with the node-id parameter for a focused import.</small></div></div>
         <div className="import-fields">
           <label className="url-field"><Link2 size={17}/><input value={figmaUrl} onChange={e => setFigmaUrl(e.target.value)} placeholder="Paste Figma design URL here..." aria-label="Figma design URL"/></label>
-          <label className="token-field"><LockKeyhole size={16}/><input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="Figma personal access token" aria-label="Figma personal access token" autoComplete="off"/></label>
+          <div className="token-connected"><LockKeyhole size={16}/><span>{tokenStatus.hasToken ? "Figma token securely connected" : "Connect Figma in settings"}</span><button type="button" onClick={() => setShowSettings(true)}>Manage</button></div>
           <button className="import-button" disabled={loading}>{loading ? <LoaderCircle className="spin" size={17}/> : <ArrowRight size={17}/>} {loading ? "Reading design..." : "Import design"}</button>
         </div>
         {error && <div className="error-message"><CircleHelp size={15}/>{error}</div>}
         <div className="import-foot"><span><Check size={13}/> No Figma MCP required</span><span><Check size={13}/> No Dev Mode dependency</span><button type="button" onClick={() => setShowSettings(v => !v)}>Connection settings <ChevronDown size={13}/></button></div>
-        {showSettings && <div className="settings-panel"><label>Supabase publishable / anon key<input value={supabaseKey} onChange={e => setSupabaseKey(e.target.value)} placeholder="sb_publishable_... or legacy anon key"/></label><small>Used only to call the ParcelX Supabase Edge Function. Never enter a service-role or secret key here.</small></div>}
+        {showSettings && <div className="settings-panel token-settings"><div className="token-settings-head"><b>Figma connection</b><small>{tokenStatus.hasToken ? "Your token is encrypted and stored securely." : "Connect your Figma personal access token."}</small></div><label>Personal access token<input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder={tokenStatus.hasToken ? "Enter a new token to replace current token" : "Paste your Figma personal access token"} autoComplete="off"/></label><label>How long should we keep it saved?<select value={retentionDays} onChange={e=>setRetentionDays(Number(e.target.value))}><option value={1}>1 day</option><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label><small>Token is encrypted server-side, never stored in browser storage, and automatically expires after the selected period.</small><div className="token-settings-actions"><button type="button" className="save-token-button" disabled={!token.trim() || tokenSaving} onClick={saveFigmaToken}>{tokenSaving ? "Validating…" : tokenStatus.hasToken ? "Update token" : "Connect Figma"}</button>{tokenStatus.hasToken && <button type="button" className="remove-token-button" onClick={removeFigmaToken}>Remove token</button>}</div></div>}
       </form>
 
-      {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Saved on this device</b><small>Private browser library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
+      {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
         <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button></div></div>
