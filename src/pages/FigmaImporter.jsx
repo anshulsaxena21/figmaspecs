@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase, SUPABASE_PUBLISHABLE_KEY } from "../lib/supabase";
-import { Activity, ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, ChevronRight, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, ChevronRight, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Github, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
 
 const PROJECT_URL = "https://ovdxipfxychotaspfccl.supabase.co";
 const FUNCTION_URL = PROJECT_URL + "/functions/v1/figma-import";
@@ -141,7 +141,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [showSettings, setShowSettings] = useState(false);
   const [retentionDays, setRetentionDays] = useState(30);
   const [tokenStatus, setTokenStatus] = useState({ hasToken: false, expiresAt: null, retentionDays: null });
-  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenSaving, setTokenSaving] = useState(false);\n  const [githubUploadOpen, setGithubUploadOpen] = useState(false);\n  const [githubToken, setGithubToken] = useState("");\n  const [githubRepo, setGithubRepo] = useState("");\n  const [githubBranch, setGithubBranch] = useState("");\n  const [githubPath, setGithubPath] = useState("figmaspecs-exports");\n  const [githubBusy, setGithubBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [design, setDesign] = useState(null);
@@ -354,7 +354,48 @@ export default function FigmaImporter({ session, onSignOut }) {
     downloadText("layer-descriptions.json",JSON.stringify(docs,null,2),"application/json");
     downloadText("layer-descriptions.csv",csv,"text/csv");
   }
-  async function downloadProjectZip() {
+  async function uploadZipToGithub(blob, filename) {
+    if (!githubToken.trim()) throw new Error("Enter a GitHub fine-grained personal access token.");
+    const match = githubRepo.trim().match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+    if (!match) throw new Error("Enter the repository as owner/repository.");
+    if (blob.size > 95 * 1024 * 1024) throw new Error("This ZIP is too large for GitHub's file upload API (maximum 100 MB).");
+    const [, owner, repository] = match;
+    const headers = { Authorization: "Bearer " + githubToken.trim(), Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    const api = "https://api.github.com/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repository);
+    const who = await fetch("https://api.github.com/user", { headers });
+    if (!who.ok) throw new Error(who.status === 401 ? "GitHub token is invalid or expired." : "Could not verify your GitHub token.");
+    const repoResponse = await fetch(api, { headers });
+    const repoInfo = await repoResponse.json().catch(() => ({}));
+    if (!repoResponse.ok) throw new Error(repoInfo.message || "Repository not found or your token cannot access it.");
+    const branch = githubBranch.trim() || repoInfo.default_branch;
+    const folder = githubPath.trim().replace(/^\/+|\/+$/g, "").replace(/\.\./g, "");
+    const path = [folder, filename].filter(Boolean).join("/");
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const existing = await fetch(api + "/contents/" + encodedPath + "?ref=" + encodeURIComponent(branch), { headers });
+    let existingSha;
+    if (existing.ok) existingSha = (await existing.json()).sha;
+    else if (existing.status !== 404) {
+      const issue = await existing.json().catch(() => ({}));
+      throw new Error(issue.message || "Could not check the destination path.");
+    }
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    const content = btoa(binary);
+    const upload = await fetch(api + "/contents/" + encodedPath, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Add FigmaSpecs project export: " + filename, content, branch, ...(existingSha ? { sha: existingSha } : {}) })
+    });
+    const result = await upload.json().catch(() => ({}));
+    if (!upload.ok) throw new Error(result.message || "GitHub rejected the upload. Check Contents: Read and write permission.");
+    setSaveStatus("Project ZIP pushed to " + owner + "/" + repository + ".");
+    setGithubToken("");
+    setGithubUploadOpen(false);
+  }
+
+  async function downloadProjectZip(uploadToGithub = false) {
     if(!design?.document)return;
     setLoading(true);setError("");
     try{
@@ -371,7 +412,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
       for(let i=0;i<(design.assets||[]).length;i++){const asset=design.assets[i];if(!asset.url)continue;try{const response=await fetch(asset.url);if(!response.ok)continue;const bytes=new Uint8Array(await response.arrayBuffer());files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+(asset.name||("asset-"+(i+1))),data:bytes});}catch(err){console.warn("Asset skipped",asset.name,err);}}
       const safe=(design.name||"figma-project").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"figma-project";
-      saveBlob(safe+"-bundle.zip",zipBlob(files));
+      const bundle = zipBlob(files);\n      if (uploadToGithub) await uploadZipToGithub(bundle, safe+"-bundle.zip");\n      else saveBlob(safe+"-bundle.zip",bundle);
     }catch(err){setError("ZIP export failed: "+(err.message||"Unknown error"));}
     finally{setLoading(false);}
   }
@@ -418,8 +459,8 @@ export default function FigmaImporter({ session, onSignOut }) {
       {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
-        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button></div></div>
-        {saveStatus && <div className="save-status" role="status">{saveStatus}</div>}<div className="stat-grid"><Stat icon={<Layers3/>} label="Total layers" value={counts.layers}/><Stat icon={<Type/>} label="Text layers" value={counts.text}/><Stat icon={<ImageIcon/>} label="Image fills" value={counts.images}/><Stat icon={<Frame/>} label="Vector layers" value={counts.vectors}/></div>
+        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button><button className="secondary-button" onClick={()=>setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> Push to GitHub</button></div></div>
+        {githubUploadOpen && <div className="github-modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget){setGithubUploadOpen(false);setGithubToken("");}}}><section className="github-modal" role="dialog" aria-modal="true" aria-labelledby="github-upload-title"><div className="github-modal-head"><div><span className="github-modal-icon"><Github size={19}/></span><div><h3 id="github-upload-title">Push project ZIP to GitHub</h3><p>Upload the complete export, including design data and downloaded assets.</p></div></div><button type="button" className="github-modal-close" onClick={()=>{setGithubUploadOpen(false);setGithubToken("");}} aria-label="Close"><X size={18}/></button></div><form onSubmit={async e=>{e.preventDefault();setGithubBusy(true);setError("");try{await downloadProjectZip(true);}catch(err){setError(err.message||"GitHub upload failed.");}finally{setGithubBusy(false);}}}><label>GitHub fine-grained token<input type="password" value={githubToken} onChange={e=>setGithubToken(e.target.value)} placeholder="github_pat_…" required autoComplete="off"/></label><small className="github-token-help">Create a token with access to the destination repository and <b>Contents: Read and write</b>. It is used only for this upload and is not saved by FigmaSpecs.</small><label>Repository<input value={githubRepo} onChange={e=>setGithubRepo(e.target.value)} placeholder="owner/repository" required autoComplete="off"/></label><div className="github-modal-row"><label>Branch <span>(optional)</span><input value={githubBranch} onChange={e=>setGithubBranch(e.target.value)} placeholder="Default branch"/></label><label>Folder in repository<input value={githubPath} onChange={e=>setGithubPath(e.target.value)} placeholder="figmaspecs-exports"/></label></div><label>Commit message<input value={"Add FigmaSpecs project export"} readOnly/></label><div className="github-modal-actions"><button type="button" className="secondary-button" onClick={()=>{setGithubUploadOpen(false);setGithubToken("");}}>Cancel</button><button type="submit" className="primary-small" disabled={githubBusy||!githubToken.trim()||!githubRepo.trim()}>{githubBusy?<LoaderCircle className="spin" size={15}/>:<Github size={15}/>} {githubBusy?"Uploading ZIP…":"Upload ZIP to GitHub"}</button></div></form><p className="github-modal-foot">FigmaSpecs uploads one ZIP file to your selected repository. Existing files at the same path will be replaced in a new commit.</p></section></div>}\n        {saveStatus && <div className="save-status" role="status">{saveStatus}</div>}<div className="stat-grid"><Stat icon={<Layers3/>} label="Total layers" value={counts.layers}/><Stat icon={<Type/>} label="Text layers" value={counts.text}/><Stat icon={<ImageIcon/>} label="Image fills" value={counts.images}/><Stat icon={<Frame/>} label="Vector layers" value={counts.vectors}/></div>
         <div className="inspector-layout">
           <section className="panel layers-panel"><div className="panel-heading"><div><Layers3 size={17}/><b>Layers</b><span className="count-pill">{counts.layers}</span></div></div><div className="layer-search"><Search size={15}/><input placeholder="Search layers..." value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><div className="layer-list">{query ? filteredNodes.slice(0,120).map(n => <button key={n.id} className={`layer-row ${selected===n.id?"selected":""}`} onClick={() => setSelected(n.id)}><NodeIcon type={n.type}/><span className="layer-name">{n.name}</span><span className="layer-type">{n.type}</span></button>) : renderTree(design.document)}</div></section>
           <section className="panel details-panel"><div className="detail-tabs"><button className={activeTab==="layers"?"active":""} onClick={()=>setActiveTab("layers")}>Properties</button><button className={activeTab==="assets"?"active":""} onClick={()=>setActiveTab("assets")}>Assets <span>{design.assets?.length || 0}</span></button></div>
