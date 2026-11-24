@@ -1,2 +1,5 @@
 [functions.instagram-feed]
 verify_jwt = false
+
+[functions.figma-import]
+verify_jwt = false
