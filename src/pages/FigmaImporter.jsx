@@ -418,7 +418,7 @@ export default function FigmaImporter({ session, onSignOut }) {
     if (!branch) throw new Error("Could not determine the destination branch.");
     const branchRef = await request(api + "/git/ref/heads/" + encodeURIComponent(branch));
     const baseCommit = await request(api + "/git/commits/" + branchRef.object.sha);
-    const folder = githubPath.trim().replace(/^\\/+|\\/+$/g, "").replace(/\\.\\./g, "");
+    const folder = githubPath.trim().replace(/^\/+|\/+$/g, "").replace(/\.\./g, "");
     if (folder.split("/").some(part => part === "." || part === "")) throw new Error("Enter a valid destination folder.");
     const base64 = data => {
       let binary = "";
