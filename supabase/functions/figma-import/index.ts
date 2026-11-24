@@ -87,21 +87,127 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "POST") return reply({ message: "Use POST to import a Figma file." }, 405);
 
   try {
-    const suppliedKey = request.headers.get("apikey") || "";
+    const authHeader = request.headers.get("Authorization") || "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "");
+    if (!accessToken) return reply({ message: "Please sign in to use FigmaSpecs." }, 401);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = getSupabaseSecret();
     const publishableRaw = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS");
     const publishableKeys = publishableRaw ? Object.values(JSON.parse(publishableRaw)) : [];
-    const allowedKeys = [...publishableKeys, Deno.env.get("SUPABASE_ANON_KEY")].filter(Boolean);
-    if (!allowedKeys.includes(suppliedKey)) return reply({ message: "Supabase client key was not accepted." }, 401);
-
+    const suppliedKey = request.headers.get("apikey") || "";
+    if (publishableKeys.length && !publishableKeys.includes(suppliedKey)) return reply({ message: "Supabase client key was not accepted." }, 401);
+    const authResponse = await fetch(`${supabaseUrl}/auth/v1/user`, { headers: { apikey: suppliedKey, Authorization: `Bearer ${accessToken}` } });
+    if (!authResponse.ok) return reply({ message: "Your session has expired. Please sign in again." }, 401);
+    const authUser = await authResponse.json(), userId = authUser.id;
+    if (!userId) return reply({ message: "Could not identify your account." }, 401);
     const body = await request.json();
+    const rpc = async (name: string, args: Record<string, unknown>) => {
+      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${name}`, { method: "POST", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" }, body: JSON.stringify(args) });
+      if (!response.ok) throw new Error("Secure credential storage request failed.");
+      return response.json().catch(() => null);
+    };
+    if (body.action === "save_token") {
+      const candidate = String(body.figmaToken || "").trim(), days = Number(body.retentionDays);
+      if (candidate.length < 20 || candidate.length > 500) return reply({ message: "Enter a valid Figma personal access token." }, 400);
+      if (![0,1,7,30,90].includes(days)) return reply({ message: "Choose a valid token retention period." }, 400);
+      const check = await fetch(`${FIGMA_API}/me`, { headers: { "X-Figma-Token": candidate } });
+      if (!check.ok) return reply({ message: "Figma could not validate this token. Check it and try again." }, 400);
+      await rpc("figmaspecs_save_token", { p_user_id: userId, p_token: candidate, p_retention_days: days });
+      return reply({ saved: true, retentionDays: days });
+    }
+    if (body.action === "token_status") {
+      const status = await rpc("figmaspecs_token_status", { p_user_id: userId }), row = Array.isArray(status) ? status[0] : status;
+      if (row?.has_token && row.expires_at && new Date(row.expires_at) <= new Date()) { await rpc("figmaspecs_delete_token", { p_user_id: userId }); return reply({ hasToken: false }); }
+      return reply({ hasToken: !!row?.has_token, retentionDays: row?.retention_days || null, expiresAt: row?.expires_at || null });
+    }
+    if (body.action === "delete_token") { await rpc("figmaspecs_delete_token", { p_user_id: userId }); return reply({ deleted: true }); }
+    if (body.action === "github_token_status") {
+      const status = await rpc("figmaspecs_github_token_status", { p_user_id: userId }), row = Array.isArray(status) ? status[0] : status;
+      if (row?.has_token && row.expires_at && new Date(row.expires_at) <= new Date()) { await rpc("figmaspecs_delete_github_token", { p_user_id: userId }); return reply({ hasToken: false }); }
+      return reply({ hasToken: !!row?.has_token, retentionDays: row?.retention_days || null, expiresAt: row?.expires_at || null });
+    }
+    if (body.action === "save_github_token") {
+      const candidate = String(body.githubToken || "").trim(), days = Number(body.retentionDays);
+      if (candidate.length < 20 || candidate.length > 500) return reply({ message: "Enter a valid GitHub personal access token." }, 400);
+      if (![0,1,7,30,90].includes(days)) return reply({ message: "Choose a valid GitHub token retention period." }, 400);
+      const check = await fetch("https://api.github.com/user", { headers: { Authorization: "Bearer " + candidate, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
+      if (!check.ok) { const detail = await check.json().catch(() => ({})); return reply({ message: detail.message || "GitHub could not validate this token." }, 400); }
+      await rpc("figmaspecs_save_github_token", { p_user_id: userId, p_token: candidate, p_retention_days: days });
+      return reply({ saved: true, retentionDays: days, expiresAt: days === 0 ? null : new Date(Date.now() + days * 86400000).toISOString() });
+    }
+    if (body.action === "get_github_token") {
+      const rows = await rpc("figmaspecs_get_github_token", { p_user_id: userId }), row = Array.isArray(rows) ? rows[0] : rows;
+      return reply({ token: row?.token || null, retentionDays: row?.retention_days || null, expiresAt: row?.expires_at || null });
+    }
+    if (body.action === "delete_github_token") {
+      await rpc("figmaspecs_delete_github_token", { p_user_id: userId });
+      return reply({ deleted: true });
+    }
+    if (body.action === "refresh_asset_urls") {
+      const requested = Array.isArray(body.assets) ? body.assets.slice(0, 1000) : [];
+      const refreshed = await Promise.all(requested.map(async (asset: any) => {
+        const path = String(asset?.path || "");
+        if (!path || !path.startsWith(userId + "/") || path.includes("..")) return { nodeId: asset?.nodeId, error: "Asset path is not available for this account." };
+        const encoded = path.split("/").map(encodeURIComponent).join("/");
+        const sign = await fetch(`${supabaseUrl}/storage/v1/object/sign/figma-assets/${encoded}`, {
+          method: "POST", headers: storageHeaders(serviceKey, "application/json"), body: JSON.stringify({ expiresIn: 3600 })
+        });
+        const payload = await sign.json().catch(() => ({}));
+        if (!sign.ok || !payload.signedURL) return { nodeId: asset?.nodeId, error: "Could not refresh asset URL for " + (asset?.name || path) };
+        const url = payload.signedURL.startsWith("http") ? payload.signedURL : supabaseUrl + "/storage/v1" + payload.signedURL;
+        return { nodeId: asset?.nodeId, path, name: asset?.name, format: asset?.format, url };
+      }));
+      return reply({ assets: refreshed });
+    }
     const fileKey = safeFileKey(body.fileKey);
-    const figmaToken = String(body.figmaToken || "").trim();
+    const tokenRows = await rpc("figmaspecs_get_token", { p_user_id: userId });
+    const tokenRow = Array.isArray(tokenRows) ? tokenRows[0] : tokenRows;
+    const figmaToken = String(tokenRow?.token || "").trim();
+    if (!figmaToken) return reply({ message: "Connect your Figma account in settings before importing." }, 400);
     const nodeId = body.nodeId ? String(body.nodeId).replace(/-/g, ":") : "";
     if (!figmaToken || figmaToken.length < 20 || figmaToken.length > 500) {
       return reply({ message: "A valid Figma personal access token is required." }, 400);
     }
 
     const figmaHeaders = { "X-Figma-Token": figmaToken };
+    if (body.action === "export_assets") {
+      const requested = Array.isArray(body.assets) ? body.assets.slice(0, 1000) : [];
+      if (!requested.length) return reply({ assets: [] });
+      const output: any[] = [];
+      for (const format of ["png", "svg"]) {
+        const group = requested.filter((asset: any) => String(asset?.format).toLowerCase() === format);
+        for (let offset = 0; offset < group.length; offset += 80) {
+          const batch = group.slice(offset, offset + 80);
+          const ids = batch.map((asset: any) => String(asset.nodeId || "").replace(/-/g, ":")).filter(Boolean);
+          if (!ids.length) continue;
+          const params = new URLSearchParams({ ids: ids.join(","), format, scale: "1" });
+          const imageResponse = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+          const imagePayload = await imageResponse.json().catch(() => ({}));
+          if (!imageResponse.ok) throw new Error("Figma could not regenerate " + format.toUpperCase() + " assets (HTTP " + imageResponse.status + ").");
+          for (const asset of batch) {
+            const nodeId = String(asset.nodeId || "").replace(/-/g, ":");
+            const sourceUrl = imagePayload.images?.[nodeId];
+            if (!sourceUrl) { output.push({ nodeId, name: asset.name, format, error: "Figma did not return an export URL for this asset." }); continue; }
+            const download = await fetch(sourceUrl);
+            if (!download.ok) { output.push({ nodeId, name: asset.name, format, error: "Could not download the regenerated asset." }); continue; }
+            const bytes = await download.arrayBuffer();
+            const name = String(asset.name || ("asset-" + nodeId.replace(/:/g, "-") + "." + format)).replace(/[^a-zA-Z0-9._-]/g, "-");
+            const path = `${userId}/${fileKey}/${name}`;
+            const encoded = path.split("/").map(encodeURIComponent).join("/");
+            const uploadHeaders = storageHeaders(serviceKey, format === "svg" ? "image/svg+xml" : "image/png");
+            uploadHeaders.set("x-upsert", "true");
+            const upload = await fetch(`${supabaseUrl}/storage/v1/object/figma-assets/${encoded}`, { method: "PUT", headers: uploadHeaders, body: bytes });
+            if (!upload.ok) { output.push({ nodeId, name, format, error: "Could not store regenerated asset: " + (await upload.text()).slice(0, 120) }); continue; }
+            const sign = await fetch(`${supabaseUrl}/storage/v1/object/sign/figma-assets/${encoded}`, { method: "POST", headers: storageHeaders(serviceKey, "application/json"), body: JSON.stringify({ expiresIn: 3600 }) });
+            const signed = await sign.json().catch(() => ({}));
+            if (!sign.ok || !signed.signedURL) { output.push({ nodeId, name, format, error: "Could not create a fresh asset download URL." }); continue; }
+            const url = signed.signedURL.startsWith("http") ? signed.signedURL : supabaseUrl + "/storage/v1" + signed.signedURL;
+            output.push({ nodeId, name, format, path, url, stored: true });
+          }
+        }
+      }
+      return reply({ assets: output });
+    }
     const endpoint = nodeId
       ? `${FIGMA_API}/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`
       : `${FIGMA_API}/files/${fileKey}?geometry=paths`;
@@ -131,34 +237,54 @@ Deno.serve(async (request: Request) => {
     if (!document) return reply({ message: "Figma returned an empty document." }, 422);
 
     const nodes = flatten([document]);
-    const imageNodeIds = nodes.filter(n => (n.fills || []).some((fill: any) => fill.type === "IMAGE")).map(n => n.id);
-    const vectorNodeIds = nodes.filter(n => ["VECTOR","BOOLEAN_OPERATION"].includes(n.type)).map(n => n.id);
-    const assetIds = [...new Set([...imageNodeIds, ...vectorNodeIds])].slice(0, 180);
-    let imageMap: Record<string, string> = {};
-    for (const batch of [
-      { ids: imageNodeIds.slice(0, 100), format: "png", scale: 2 },
-      { ids: vectorNodeIds.slice(0, 100), format: "svg", scale: 1 }
-    ]) {
-      if (!batch.ids.length) continue;
-      const params = new URLSearchParams({ ids: batch.ids.join(","), format: batch.format, scale: String(batch.scale) });
-      const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
-      if (response.ok) {
-        const payload = await response.json();
-        imageMap = { ...imageMap, ...(payload.images || {}) };
+    // A Figma layer is exportable when it has an image fill, is a vector/shape,
+    // or has explicit export settings (which also covers frames, groups,
+    // components, instances, slices and other supported node types).
+    const vectorTypes = new Set(["VECTOR","BOOLEAN_OPERATION","RECTANGLE","ELLIPSE","STAR","POLYGON","LINE","REGULAR_POLYGON","SHAPE_WITH_TEXT"]);
+    const candidates = nodes
+      .filter((node: any) => node?.id)
+      .map((node: any) => {
+        const hasImageFill = (node.fills || []).some((fill: any) => fill.type === "IMAGE" && fill.visible !== false);
+        const settings = (node.exportSettings || []).filter((setting: any) => ["PNG","JPG","SVG"].includes(String(setting.format || "").toUpperCase()));
+        if (settings.length) {
+          const selectedFormat = String(settings[0].format).toLowerCase();
+          return { node, format: selectedFormat === "svg" ? "svg" : "png" };
+        }
+        if (hasImageFill) return { node, format: "png" };
+        if (vectorTypes.has(node.type)) return { node, format: "svg" };
+        return null;
+      })
+      .filter(Boolean) as Array<{node:any;format:"png"|"svg"}>;
+    const candidateById = new Map<string, {node:any;format:"png"|"svg"}>();
+    for (const candidate of candidates) candidateById.set(candidate.node.id, candidate);
+    const exportCandidates = [...candidateById.values()];
+    const imageNodeIds = exportCandidates.filter(item => item.format === "png").map(item => item.node.id);
+    const vectorNodeIds = exportCandidates.filter(item => item.format === "svg").map(item => item.node.id);
+    const assetIds = exportCandidates.map(item => item.node.id);
+    const imageMap: Record<string, string> = {};
+    for (const format of ["png", "svg"] as const) {
+      const ids = exportCandidates.filter(item => item.format === format).map(item => item.node.id);
+      for (let offset = 0; offset < ids.length; offset += 80) {
+        const batchIds = ids.slice(offset, offset + 80);
+        if (!batchIds.length) continue;
+        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: format === "png" ? "2" : "1" });
+        const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`Figma asset rendering failed for ${format.toUpperCase()} (HTTP ${response.status}): ${String(payload.err || payload.message || "Unknown Figma API error")}`);
+        Object.assign(imageMap, payload.images || {});
       }
     }
 
     const renderAssets = assetIds.map(id => {
-      const node = nodes.find(n => n.id === id);
+      const candidate = candidateById.get(id);
+      const node = candidate?.node;
       const url = imageMap[id];
       if (!url) return null;
-      const format = imageNodeIds.includes(id) ? "png" : "svg";
+      const format = candidate!.format;
       const safeName = String(node?.name || "asset").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
       return { nodeId: id, name: `${safeName || "asset"}-${id.replace(/:/g, "-")}.${format}`, format, sourceUrl: url };
     }).filter(Boolean);
 
-    const serviceKey = getSupabaseSecret();
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
     if (!supabaseUrl) throw new Error("SUPABASE_URL is not configured.");
     const storedAssets: any[] = [];
     for (let i = 0; i < renderAssets.length; i += 6) {
@@ -169,7 +295,7 @@ Deno.serve(async (request: Request) => {
           if (!download.ok) throw new Error("Figma asset download failed.");
           const bytes = await download.arrayBuffer();
           const mime = asset.format === "svg" ? "image/svg+xml" : "image/png";
-          const path = `${fileKey}/${asset.name}`;
+          const path = `${userId}/${fileKey}/${asset.name}`;
           const encoded = path.split("/").map(encodeURIComponent).join("/");
           const upload = await fetch(`${supabaseUrl}/storage/v1/object/figma-assets/${encoded}`, {
             method: "POST",
@@ -200,31 +326,8 @@ Deno.serve(async (request: Request) => {
       images: imageNodeIds.length,
       vectors: vectorNodeIds.length
     };
-    const saveResponse = await fetch(`${supabaseUrl}/rest/v1/figma_imports`, {
-      method: "POST",
-      headers: {
-        ...Object.fromEntries(storageHeaders(serviceKey, "application/json")),
-        "Prefer": "return=representation"
-      },
-      body: JSON.stringify({
-        file_key: fileKey,
-        file_name: fileName,
-        node_id: nodeId || null,
-        version: filePayload.version || null,
-        last_modified: lastModified,
-        design_data: cleanNode(document),
-        layer_descriptions: describeLayers(document, storedAssets),
-        assets: storedAssets,
-        stats
-      })
-    });
-    if (!saveResponse.ok) {
-      console.error("Figma snapshot save failed", saveResponse.status, (await saveResponse.text()).slice(0, 300));
-      throw new Error("The design was read, but its snapshot could not be saved to Supabase.");
-    }
-    const savedRows = await saveResponse.json();
     return reply({
-      importId: Array.isArray(savedRows) ? savedRows[0]?.id || null : null,
+      importId: null,
       name: fileName,
       lastModified,
       version: filePayload.version || null,
