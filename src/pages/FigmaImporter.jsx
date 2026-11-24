@@ -176,7 +176,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       try {
         const { data, error: dbError } = await supabase.from("figma_user_projects").select("id,name,design_data,assets,stats,created_at,updated_at").order("updated_at", { ascending: false });
         if (dbError) throw dbError;
-        const projects = (data || []).map(row => ({ id: row.id, name: row.name, savedAt: row.updated_at || row.created_at, design: { name: row.name, document: row.design_data, assets: row.assets || [], stats: row.stats || {} } }));
+        const projects = (data || []).map(row => ({ id: row.id, name: row.name, savedAt: row.updated_at || row.created_at, design: { name: row.name, document: row.design_data, assets: row.assets || [], stats: row.stats || {}, fileKey: row.stats?.fileKey || null } }));
         if (alive) setSavedProjects(projects);
       } catch (err) { if (alive) setError("Could not load your cloud projects: " + err.message); }
       finally { if (alive) setStorageReady(true); }
@@ -385,10 +385,40 @@ export default function FigmaImporter({ session, onSignOut }) {
       setSaveStatus("Saved securely to your account.");
     } catch (err) { setSaveStatus(""); setError("Could not save project: " + err.message); }
   }
-  function openSavedProject(project) {
-    setDesign(project.design); setSelected(project.design.document?.children?.[0]?.id || project.design.document?.id || null);
-    setExpanded({ [project.design.document?.id]: true });
-    setError(""); setSaveStatus("Opened saved project");
+  async function openSavedProject(project) {
+    const savedDesign = project.design;
+    setDesign(savedDesign);
+    setSelected(savedDesign.document?.children?.[0]?.id || savedDesign.document?.id || null);
+    setExpanded({ [savedDesign.document?.id]: true });
+    setError("");
+    if (savedDesign.assets?.length) {
+      setSaveStatus("Opened saved project");
+      return;
+    }
+    if (!savedDesign.fileKey) {
+      setSaveStatus("Opened saved project");
+      setError("This saved project has no stored Figma file key and no saved assets. Re-import the original Figma URL to restore its images and vectors.");
+      return;
+    }
+    setLoading(true);
+    setSaveStatus("Recovering images and vectors from Figma…");
+    try {
+      const recovered = await callFigmaFunction({ fileKey: savedDesign.fileKey });
+      const refreshedDesign = { ...recovered, fileKey: savedDesign.fileKey };
+      const { error: updateError } = await supabase
+        .from("figma_user_projects")
+        .update({ design_data: refreshedDesign.document, assets: refreshedDesign.assets || [], stats: { ...(refreshedDesign.stats || {}), fileKey: savedDesign.fileKey }, updated_at: new Date().toISOString() })
+        .eq("id", project.id);
+      if (updateError) throw updateError;
+      setDesign(refreshedDesign);
+      setSavedProjects(items => items.map(item => item.id === project.id ? { ...item, savedAt: new Date().toISOString(), design: refreshedDesign } : item));
+      setSaveStatus(`Recovered ${(refreshedDesign.assets || []).length} assets and updated the saved project.`);
+    } catch (err) {
+      setSaveStatus("Opened saved project");
+      setError("Could not recover this project's assets: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   }
   async function removeSavedProject(id) {
     try {
