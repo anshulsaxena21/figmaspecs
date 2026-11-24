@@ -347,7 +347,7 @@ export default function FigmaImporter() {
         {name:"design-data/layer-descriptions.csv",data:[keys.join(","),...docs.map(row=>keys.map(k=>csvEscape(row[k])).join(","))].join("\n")},
         {name:"design-data/design-tokens.css",data:cssTokens(allNodes)},
         {name:"assets/asset-manifest.json",data:JSON.stringify(design.assets||[],null,2)},
-        {name:"README.md",data:"# "+(design.name||"Figma project")+"\n\nExported from ParcelX Studio.\n\n- design-data/complete-design.json: full extracted node tree and asset manifest\n- design-data/layer-descriptions.json: layer measurements, layout, typography and appearance\n- design-data/layer-descriptions.csv: spreadsheet-friendly layer inventory\n- design-data/design-tokens.css: extracted design tokens\n- assets/: downloaded image and vector assets\n"}
+        {name:"README.md",data:"# "+(design.name||"Figma project")+"\n\nExported from FigmaSpecs.\n\n- design-data/complete-design.json: full extracted node tree and asset manifest\n- design-data/layer-descriptions.json: layer measurements, layout, typography and appearance\n- design-data/layer-descriptions.csv: spreadsheet-friendly layer inventory\n- design-data/design-tokens.css: extracted design tokens\n- assets/: downloaded image and vector assets\n"}
       ];
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
@@ -374,7 +374,7 @@ export default function FigmaImporter() {
 
   return <main className="figma-studio">
     <header className="studio-topbar">
-      <a className="studio-brand" href="./"><span className="brand-mark"><Figma size={19}/></span><span>ParcelX <b>Studio</b></span></a>
+      <a className="studio-brand" href="./"><span className="brand-mark"><Figma size={19}/></span><span>Figma<b>Specs</b></span></a>
       <div className="topbar-center"><span className="live-dot"/> Design extraction workspace <span className="topbar-divider"/> <span className="free-label">FREE-TIER FRIENDLY</span></div>
       <button className="icon-button" onClick={() => setShowSettings(v => !v)} title="Connection settings"><Settings2 size={18}/></button>
     </header>
@@ -411,7 +411,7 @@ export default function FigmaImporter() {
         </div>
         <div className="workspace-note"><Activity size={15}/><span>Values are extracted from Figma's node data. Auto Layout values are shown separately from absolute position so you can reproduce responsive behaviour accurately.</span></div>
       </div>}
-      <footer className="studio-footer"><span>ParcelX Studio <span className="footer-dot">·</span> Figma Importer</span><span>Built with Figma REST API + Supabase Edge Functions</span></footer>
+      <footer className="studio-footer"><span>FigmaSpecs <span className="footer-dot">·</span> Figma Importer</span><span>Built with Figma REST API + Supabase Edge Functions</span></footer>
     </section>
   </main>;
 }
