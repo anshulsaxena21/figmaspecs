@@ -152,6 +152,8 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [githubUsername, setGithubUsername] = useState("");
   const [githubRepos, setGithubRepos] = useState([]);
   const [githubRepoLoading, setGithubRepoLoading] = useState(false);
+  const [githubProgress, setGithubProgress] = useState({ active: false, stage: "", current: 0, total: 0, percent: 0, fileName: "" });
+  const [githubToast, setGithubToast] = useState(null);
   const [showFigmaTokenHelp, setShowFigmaTokenHelp] = useState(false);
   const [showGithubTokenHelp, setShowGithubTokenHelp] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -441,6 +443,7 @@ export default function FigmaImporter({ session, onSignOut }) {
     const match = githubRepo.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
     if (!match) throw new Error("Choose a valid destination repository from the list.");
     const [, owner, repository] = match;
+    setGithubProgress({ active: true, stage: "Reading project files", current: 0, total: 0, percent: 2, fileName: "" });
     const files = await unpackStoredZip(blob);
     if (files.length > 500) throw new Error("This export contains more than 500 files. Split the export into smaller uploads.");
     const totalBytes = files.reduce((sum, file) => sum + file.data.length, 0);
@@ -448,11 +451,28 @@ export default function FigmaImporter({ session, onSignOut }) {
     const headers = { Authorization: "Bearer " + githubToken.trim(), Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
     const api = "https://api.github.com/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repository);
     const request = async (url, options = {}) => {
-      const response = await fetch(url, { ...options, headers: { ...headers, ...(options.headers || {}) } });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message || "GitHub API request failed (" + response.status + ").");
-      return payload;
+      let lastError;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 60000);
+          let response;
+          try { response = await fetch(url, { ...options, headers: { ...headers, ...(options.headers || {}) }, signal: controller.signal }); }
+          finally { clearTimeout(timeout); }
+          const payload = await response.json().catch(() => ({}));
+          if (response.ok) return payload;
+          const message = payload.message || "GitHub API request failed (" + response.status + ").";
+          if (response.status === 429 || response.status >= 500) { lastError = new Error(message); if (attempt < 3) { await new Promise(resolve => setTimeout(resolve, attempt * 1200)); continue; } }
+          throw new Error(message);
+        } catch (err) {
+          lastError = err.name === "AbortError" ? new Error("GitHub request timed out after 60 seconds. Check your connection and retry.") : err;
+          if (attempt >= 3 || (err.name !== "AbortError" && !/Failed to fetch|NetworkError/i.test(err.message || ""))) throw lastError;
+          await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+        }
+      }
+      throw lastError || new Error("GitHub request failed.");
     };
+    setGithubProgress({ active: true, stage: "Checking repository", current: 0, total: files.length, percent: 5, fileName: "" });
     const repoInfo = await request(api);
     const branch = githubBranch.trim() || repoInfo.default_branch || "main";
     const folder = githubPath.trim().replace(/^\/+|\/+$/g, "").replace(/\.\./g, "");
@@ -463,7 +483,6 @@ export default function FigmaImporter({ session, onSignOut }) {
       for (let i = 0; i < data.length; i += chunk) binary += String.fromCharCode(...data.subarray(i, i + chunk));
       return btoa(binary);
     };
-    setSaveStatus("Checking " + owner + "/" + repository + "…");
     const refResponse = await fetch(api + "/git/ref/heads/" + encodeURIComponent(branch), { headers });
     let baseCommit = null;
     if (refResponse.ok) {
@@ -475,28 +494,30 @@ export default function FigmaImporter({ session, onSignOut }) {
       const refError = await refResponse.json().catch(() => ({}));
       throw new Error(refResponse.status === 404 ? "Branch '" + branch + "' was not found. Choose the repository's default branch." : (refError.message || "Could not read the destination branch."));
     }
-    setSaveStatus("Preparing " + files.length + " project files…");
     const entries = [];
-    for (let i = 0; i < files.length; i += 4) {
-      const batch = files.slice(i, i + 4);
-      const created = await Promise.all(batch.map(async file => {
-        const blobObject = await request(api + "/git/blobs", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: base64(file.data), encoding: "base64" })
-        });
-        return { path: [folder, file.path].filter(Boolean).join("/"), mode: "100644", type: "blob", sha: blobObject.sha };
-      }));
-      entries.push(...created);
-      setSaveStatus("Uploading files to GitHub… " + entries.length + " / " + files.length);
+    setGithubProgress({ active: true, stage: "Uploading individual files", current: 0, total: files.length, percent: 8, fileName: "" });
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const shortName = file.path.split("/").pop();
+      setGithubProgress({ active: true, stage: "Uploading file " + (i + 1) + " of " + files.length, current: i, total: files.length, percent: Math.round(8 + (i / files.length) * 72), fileName: shortName });
+      const blobObject = await request(api + "/git/blobs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: base64(file.data), encoding: "base64" })
+      });
+      entries.push({ path: [folder, file.path].filter(Boolean).join("/"), mode: "100644", type: "blob", sha: blobObject.sha });
+      setGithubProgress({ active: true, stage: "Uploaded " + (i + 1) + " of " + files.length + " files", current: i + 1, total: files.length, percent: Math.round(8 + ((i + 1) / files.length) * 72), fileName: shortName });
     }
+    setGithubProgress({ active: true, stage: "Creating Git tree", current: files.length, total: files.length, percent: 84, fileName: "" });
     const tree = await request(api + "/git/trees", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tree: entries, ...(baseCommit ? { base_tree: baseCommit.tree.sha } : {}) })
     });
+    setGithubProgress({ active: true, stage: "Creating commit", current: files.length, total: files.length, percent: 91, fileName: "" });
     const commit = await request(api + "/git/commits", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Add FigmaSpecs project files (" + files.length + " files)", tree: tree.sha, parents: baseCommit ? [baseCommit.sha] : [] })
     });
+    setGithubProgress({ active: true, stage: "Publishing commit to branch", current: files.length, total: files.length, percent: 97, fileName: "" });
     if (baseCommit) {
       await request(api + "/git/refs/heads/" + encodeURIComponent(branch), {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -508,7 +529,10 @@ export default function FigmaImporter({ session, onSignOut }) {
         body: JSON.stringify({ ref: "refs/heads/" + branch, sha: commit.sha })
       });
     }
-    setSaveStatus(files.length + " individual files pushed to " + owner + "/" + repository + (folder ? " in " + folder : " at repository root") + ".");
+    const successMessage = files.length + " individual files pushed to " + owner + "/" + repository + (folder ? " in " + folder : " at repository root") + ".";
+    setSaveStatus(successMessage);
+    setGithubProgress({ active: false, stage: "Upload complete", current: files.length, total: files.length, percent: 100, fileName: "" });
+    setGithubToast({ type: "success", title: "Files pushed successfully", message: successMessage });
     setGithubUploadOpen(false);
   }
 
@@ -532,7 +556,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       const bundle = zipBlob(files);
       if (uploadToGithub) await uploadZipToGithub(bundle);
       else saveBlob(safe+"-bundle.zip",bundle);
-    }catch(err){if(uploadToGithub) throw err; setError("ZIP export failed: "+(err.message||"Unknown error"));}
+    }catch(err){if(uploadToGithub){setGithubProgress({active:false,stage:"Upload failed",current:0,total:0,percent:0,fileName:""});setGithubToast({type:"error",title:"GitHub upload failed",message:err.message||"Unknown upload error"});setError(err.message||"GitHub upload failed.");}else setError("ZIP export failed: "+(err.message||"Unknown error"));}
     finally{setLoading(false);}
   }
 
