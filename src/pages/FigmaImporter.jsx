@@ -142,7 +142,14 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [retentionDays, setRetentionDays] = useState(30);
   const [tokenStatus, setTokenStatus] = useState({ hasToken: false, expiresAt: null, retentionDays: null });
   const [tokenSaving, setTokenSaving] = useState(false);
-  const [githubUploadOpen, setGithubUploadOpen] = useState(false);\n  const [githubToken, setGithubToken] = useState("");\n  const [githubRepo, setGithubRepo] = useState("");\n  const [githubBranch, setGithubBranch] = useState("");\n  const [githubPath, setGithubPath] = useState("figmaspecs-exports");\n  const [githubBusy, setGithubBusy] = useState(false);\n  const [githubConnected, setGithubConnected] = useState(false);\n  const [githubUsername, setGithubUsername] = useState("");
+  const [githubUploadOpen, setGithubUploadOpen] = useState(false);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubBranch, setGithubBranch] = useState("");
+  const [githubPath, setGithubPath] = useState("figmaspecs-exports");
+  const [githubBusy, setGithubBusy] = useState(false);
+  const [githubConnected, setGithubConnected] = useState(false);
+  const [githubUsername, setGithubUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [design, setDesign] = useState(null);
