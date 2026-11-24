@@ -261,11 +261,24 @@ export default function FigmaImporter({ session, onSignOut }) {
   }
   function exportJson() { downloadText("figma-design.json", JSON.stringify(design, null, 2), "application/json"); }
   function exportTokens() { downloadText("figma-tokens.css", cssTokens(allNodes), "text/css"); }
+  async function getFreshExportAssets() {
+    const assets = design?.assets || [];
+    const stored = assets.filter(asset => asset.path && asset.stored);
+    if (!stored.length) return assets;
+    const result = await callFigmaFunction({ action: "refresh_asset_urls", assets: stored.map(({nodeId,path,name,format})=>({nodeId,path,name,format})) });
+    const refreshed = new Map((result.assets || []).filter(asset=>asset.url).map(asset=>[asset.nodeId,asset]));
+    return assets.map(asset => {
+      const fresh = refreshed.get(asset.nodeId);
+      if (asset.path && asset.stored && !fresh) throw new Error("Could not retrieve stored image/vector asset: " + (asset.name || asset.nodeId) + ". Please re-import the Figma file to restore this asset.");
+      return fresh ? { ...asset, ...fresh, stored: true } : asset;
+    });
+  }
+
   async function exportReact() {
     if (!design?.document) { setError("Import a Figma design before exporting React."); return; }
     setLoading(true); setError("");
     try {
-      const assets = design.assets || [];
+      const assets = await getFreshExportAssets();
       const assetPaths = new Map();
       assets.forEach((asset,index) => {
         const filename = (index+1) + "-" + safeFileName(asset.name, "asset" + (asset.format === "svg" ? ".svg" : ".png"));
@@ -586,7 +599,20 @@ export default function FigmaImporter({ session, onSignOut }) {
       ];
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
-      for(let i=0;i<(design.assets||[]).length;i++){const asset=design.assets[i];if(!asset.url)continue;try{const response=await fetch(asset.url);if(!response.ok)continue;const bytes=new Uint8Array(await response.arrayBuffer());files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+(asset.name||("asset-"+(i+1))),data:bytes});}catch(err){console.warn("Asset skipped",asset.name,err);}}
+      const exportAssets = await getFreshExportAssets();
+      let downloadedAssets = 0;
+      for(let i=0;i<exportAssets.length;i++){
+        const asset=exportAssets[i];
+        if(!asset.url) { if(asset.stored) throw new Error("Missing image/vector URL for " + asset.name); continue; }
+        const response=await fetch(asset.url);
+        if(!response.ok) throw new Error("Could not download asset " + asset.name + " (HTTP " + response.status + ").");
+        const bytes=new Uint8Array(await response.arrayBuffer());
+        const safeName=safeFileName(asset.name,"asset-"+(i+1)+(asset.format==="svg"?".svg":".png"));
+        files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+String(i+1).padStart(3,"0")+"-"+safeName,data:bytes});
+        downloadedAssets++;
+        setGithubProgress({active:uploadToGithub,stage:"Preparing image and vector assets",current:downloadedAssets,total:exportAssets.length,percent:Math.round(3+(downloadedAssets/Math.max(exportAssets.length,1))*4),fileName:safeName});
+      }
+      if(exportAssets.length && downloadedAssets===0) throw new Error("No image or vector assets could be downloaded. Re-import the Figma file and try again.");
       const safe=(design.name||"figma-project").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"figma-project";
       const bundle = zipBlob(files);
       if (uploadToGithub) await uploadZipToGithub(bundle);
