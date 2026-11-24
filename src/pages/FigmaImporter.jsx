@@ -144,6 +144,8 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [tokenSaving, setTokenSaving] = useState(false);
   const [githubUploadOpen, setGithubUploadOpen] = useState(false);
   const [githubToken, setGithubToken] = useState("");
+  const [githubRetentionDays, setGithubRetentionDays] = useState(30);
+  const [githubTokenStatus, setGithubTokenStatus] = useState({ hasToken: false, retentionDays: null, expiresAt: null });
   const [githubRepo, setGithubRepo] = useState("");
   const [githubBranch, setGithubBranch] = useState("");
   const [githubPath, setGithubPath] = useState("figmaspecs-exports");
@@ -182,6 +184,17 @@ export default function FigmaImporter({ session, onSignOut }) {
     callFigmaFunction({ action: "token_status" }).then(status => {
       if (alive) { setTokenStatus(status); if (status.retentionDays) setRetentionDays(status.retentionDays); }
     }).catch(err => { if (alive) setError("Could not check Figma connection: " + err.message); });
+    callFigmaFunction({ action: "github_token_status" }).then(async status => {
+      if (!alive) return;
+      setGithubTokenStatus(status);
+      if (status.retentionDays !== null && status.retentionDays !== undefined) setGithubRetentionDays(status.retentionDays);
+      if (status.hasToken) {
+        const saved = await callFigmaFunction({ action: "get_github_token" });
+        if (!alive || !saved.token) return;
+        setGithubToken(saved.token);
+        await connectGithub(saved.token, false);
+      }
+    }).catch(err => { if (alive) setGithubToast({ type: "error", title: "GitHub reconnect failed", message: err.message }); });
     return () => { alive = false; };
   }, [session.user.id]);
 
@@ -401,8 +414,8 @@ export default function FigmaImporter({ session, onSignOut }) {
     });
   }
 
-  async function connectGithub() {
-    const personalToken = githubToken.trim();
+  async function connectGithub(tokenOverride, persist = true) {
+    const personalToken = String(tokenOverride || githubToken).trim();
     if (!personalToken) throw new Error("Paste your GitHub fine-grained token first.");
     setGithubRepoLoading(true);
     const headers = { Authorization: "Bearer " + personalToken, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
@@ -425,6 +438,10 @@ export default function FigmaImporter({ session, onSignOut }) {
       }
       const writable = repositories.filter(item => !item.archived && (item.permissions?.push || item.permissions?.admin || item.permissions?.maintain))
         .map(item => ({ id: item.id, full_name: item.full_name, private: item.private, default_branch: item.default_branch || "main", size: item.size || 0 }));
+      if (persist) {
+        await callFigmaFunction({ action: "save_github_token", githubToken: personalToken, retentionDays: githubRetentionDays });
+        setGithubTokenStatus({ hasToken: true, retentionDays: githubRetentionDays, expiresAt: githubRetentionDays === 0 ? null : new Date(Date.now() + githubRetentionDays * 86400000).toISOString() });
+      }
       setGithubRepos(writable);
       setGithubUsername(user.login || "");
       setGithubConnected(true);
@@ -461,7 +478,10 @@ export default function FigmaImporter({ session, onSignOut }) {
           finally { clearTimeout(timeout); }
           const payload = await response.json().catch(() => ({}));
           if (response.ok) return payload;
-          const message = payload.message || "GitHub API request failed (" + response.status + ").";
+          let message = payload.message || "GitHub API request failed (" + response.status + ").";
+          if (response.status === 403 && /Resource not accessible by personal access token/i.test(message)) {
+            message = "GitHub blocked this token. Open GitHub → Settings → Developer settings → Fine-grained tokens. Select this exact repository, set Metadata to Read-only and Contents to Read and write, then save. If the repository belongs to an organization, the token may also need organization approval or your account needs write access.";
+          }
           if (response.status === 429 || response.status >= 500) { lastError = new Error(message); if (attempt < 3) { await new Promise(resolve => setTimeout(resolve, attempt * 1200)); continue; } }
           throw new Error(message);
         } catch (err) {
@@ -608,9 +628,9 @@ export default function FigmaImporter({ session, onSignOut }) {
           <form onSubmit={async e=>{e.preventDefault();setGithubBusy(true);setError("");try{if(!githubConnected){await connectGithub();}else{if(!githubRepo)throw new Error("Select a repository before continuing.");setGithubUploadOpen(false);setSaveStatus("GitHub ready: "+githubRepo+". Import a design and choose Push files to GitHub.");}}catch(err){setError(err.message||"GitHub connection failed.");}finally{setGithubBusy(false);}}}>
             {!githubConnected ? <>
               <div><div className="token-label-row"><label htmlFor="github-personal-token">GitHub fine-grained personal access token</label><button type="button" className="token-help-toggle" onClick={()=>setShowGithubTokenHelp(v=>!v)} aria-expanded={showGithubTokenHelp}><CircleHelp size={13}/>{showGithubTokenHelp?"Hide guide":"How to find?"}</button></div><input id="github-personal-token" type="password" value={githubToken} onChange={e=>setGithubToken(e.target.value)} placeholder="github_pat_…" required autoComplete="off"/>{showGithubTokenHelp && <div className="token-help-panel"><b>Create a GitHub token</b><ol><li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">GitHub fine-grained tokens</a> and sign in.</li><li>Enter a token name and choose an expiration.</li><li>Under <b>Resource owner</b>, select the account or organization that owns the repository.</li><li>Under <b>Repository access</b>, choose <b>All repositories</b> or select the repository you want to use.</li><li>Under <b>Repository permissions</b>, set <b>Metadata</b> to <b>Read-only</b> and <b>Contents</b> to <b>Read and write</b>.</li><li>Click <b>Generate token</b> and copy it immediately.</li></ol><a className="token-doc-link" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">GitHub's official token guide <ArrowRight size={12}/></a><small>Your token stays in this browser session and is not saved to your FigmaSpecs profile.</small></div>}</div>
-              <small className="github-token-help">Required token permissions: Metadata (read-only) and Contents (read and write). The token must include the repositories you want to access.</small>
+              <div className="github-retention-row"><label htmlFor="github-retention">Keep GitHub token saved for</label><select id="github-retention" value={githubRetentionDays} onChange={e=>setGithubRetentionDays(Number(e.target.value))}><option value={1}>1 day</option><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>Until I remove it</option></select></div><small className="github-token-help">Your token is encrypted in your FigmaSpecs account and restored automatically when you sign in. Permissions required: Metadata (read-only), Contents (read and write), and access to the selected repository.</small>
             </> : <>
-              <div className="github-connected-banner"><span className="github-connected-check"><Check size={15}/></span><span>Connected as <b>@{githubUsername}</b></span><button type="button" onClick={()=>{setGithubConnected(false);setGithubRepos([]);setGithubRepo("");setGithubBranch("");setGithubToken("");setSaveStatus("");}}>Disconnect</button></div>
+              <div className="github-connected-banner"><span className="github-connected-check"><Check size={15}/></span><span>Connected as <b>@{githubUsername}</b><small>Token saved · {githubTokenStatus.retentionDays===0?"Until removed":(githubTokenStatus.retentionDays||githubRetentionDays)+" days"}</small></span><button type="button" onClick={async()=>{try{await callFigmaFunction({action:"delete_github_token"});setGithubToken("");setGithubConnected(false);setGithubRepos([]);setGithubRepo("");setGithubTokenStatus({hasToken:false});setSaveStatus("GitHub token removed.");}catch(err){setError(err.message);}}}>Forget token</button></div><div className="github-retention-row"><label htmlFor="github-retention-saved">Keep token saved for</label><select id="github-retention-saved" value={githubRetentionDays} onChange={async e=>{const days=Number(e.target.value);setGithubRetentionDays(days);try{await callFigmaFunction({action:"save_github_token",githubToken,retentionDays:days});setGithubTokenStatus({hasToken:true,retentionDays:days,expiresAt:days===0?null:new Date(Date.now()+days*86400000).toISOString()});setGithubToast({type:"success",title:"Retention updated",message:"Your GitHub token retention preference has been saved."});}catch(err){setError(err.message);}}}><option value={1}>1 day</option><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option><option value={0}>Until I remove it</option></select></div>
               <label htmlFor="github-repository-select">Select repository</label>
               <select id="github-repository-select" className="github-repository-select" value={githubRepo} onChange={e=>{const selectedRepo=githubRepos.find(r=>r.full_name===e.target.value);setGithubRepo(e.target.value);setGithubBranch(selectedRepo?.default_branch||"main");}} required>
                 <option value="">Choose a repository…</option>
