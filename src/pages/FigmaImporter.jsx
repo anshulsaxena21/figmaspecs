@@ -469,7 +469,7 @@ export default function FigmaImporter({ session, onSignOut }) {
     if (refResponse.ok) {
       const ref = await refResponse.json();
       baseCommit = await request(api + "/git/commits/" + ref.object.sha);
-    } else if (refResponse.status === 404 && Number(repoInfo.size || 0) === 0) {
+    } else if ((refResponse.status === 404 || refResponse.status === 409) && Number(repoInfo.size || 0) === 0) {
       baseCommit = null;
     } else {
       const refError = await refResponse.json().catch(() => ({}));
