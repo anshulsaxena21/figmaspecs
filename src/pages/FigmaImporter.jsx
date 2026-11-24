@@ -504,28 +504,34 @@ export default function FigmaImporter({ session, onSignOut }) {
       for (let i = 0; i < data.length; i += chunk) binary += String.fromCharCode(...data.subarray(i, i + chunk));
       return btoa(binary);
     };
-    const refResponse = await fetch(api + "/git/ref/heads/" + encodeURIComponent(branch), { headers });
     let baseCommit = null;
+    let initialFileUploaded = false;
+    const refUrl = api + "/git/ref/heads/" + encodeURIComponent(branch);
+    const refResponse = await fetch(refUrl, { headers });
     if (refResponse.ok) {
       const ref = await refResponse.json();
       baseCommit = await request(api + "/git/commits/" + ref.object.sha);
     } else {
       const refError = await refResponse.json().catch(() => ({}));
       const refMessage = String(refError.message || "");
-      const isEmptyRepository = /git repository is empty|repository is empty|no commits yet/i.test(refMessage)
-        || (refResponse.status === 404 && Number(repoInfo.size || 0) === 0)
-        || refResponse.status === 409;
-      if (isEmptyRepository) {
-        baseCommit = null;
-      } else if (refResponse.status === 404) {
-        throw new Error("Branch '" + branch + "' was not found. Choose the repository's default branch. GitHub says: " + (refMessage || "Reference not found."));
-      } else {
-        throw new Error(refMessage || "Could not read the destination branch (HTTP " + refResponse.status + ").");
+      const isEmptyRepository = /git repository is empty|repository is empty|no commits yet/i.test(refMessage) || refResponse.status === 409 || (refResponse.status === 404 && Number(repoInfo.size || 0) === 0);
+      if (!isEmptyRepository) {
+        if (refResponse.status === 404) throw new Error("Branch '" + branch + "' was not found. GitHub says: " + (refMessage || "Reference not found."));
+        throw new Error(refMessage || "Could not read destination branch (HTTP " + refResponse.status + ").");
       }
-    }
-    const entries = [];
+      if (!files.length) throw new Error("There are no project files to upload.");
+      setGithubProgress({ active: true, stage: "Creating the repository’s first commit", current: 0, total: files.length, percent: 6, fileName: files[0].path.split("/").pop() });
+      const firstFile = files[0];
+      const firstPath = [folder, firstFile.path].filter(Boolean).join("/");
+      const contentUrl = api + "/contents/" + firstPath.split("/").map(encodeURIComponent).join("/");
+      await request(contentUrl, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: "Initialize repository with FigmaSpecs project files", content: base64(firstFile.data), branch }) });
+      initialFileUploaded = true;
+      setGithubProgress({ active: true, stage: "First commit created", current: 1, total: files.length, percent: Math.round(8 + (1 / files.length) * 72), fileName: firstFile.path.split("/").pop() });
+      const createdRef = await request(refUrl);
+      baseCommit = await request(api + "/git/commits/" + createdRef.object.sha);
+    }    const entries = [];
     setGithubProgress({ active: true, stage: "Uploading individual files", current: 0, total: files.length, percent: 8, fileName: "" });
-    for (let i = 0; i < files.length; i++) {
+    for (let i = initialFileUploaded ? 1 : 0; i < files.length; i++) {
       const file = files[i];
       const shortName = file.path.split("/").pop();
       setGithubProgress({ active: true, stage: "Uploading file " + (i + 1) + " of " + files.length, current: i, total: files.length, percent: Math.round(8 + (i / files.length) * 72), fileName: shortName });
