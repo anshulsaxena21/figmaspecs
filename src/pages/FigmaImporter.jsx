@@ -150,6 +150,8 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [githubBusy, setGithubBusy] = useState(false);
   const [githubConnected, setGithubConnected] = useState(false);
   const [githubUsername, setGithubUsername] = useState("");
+  const [githubRepos, setGithubRepos] = useState([]);
+  const [githubRepoLoading, setGithubRepoLoading] = useState(false);
   const [showFigmaTokenHelp, setShowFigmaTokenHelp] = useState(false);
   const [showGithubTokenHelp, setShowGithubTokenHelp] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -397,10 +399,47 @@ export default function FigmaImporter({ session, onSignOut }) {
     });
   }
 
+  async function connectGithub() {
+    const personalToken = githubToken.trim();
+    if (!personalToken) throw new Error("Paste your GitHub fine-grained token first.");
+    setGithubRepoLoading(true);
+    const headers = { Authorization: "Bearer " + personalToken, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    try {
+      const userResponse = await fetch("https://api.github.com/user", { headers });
+      const user = await userResponse.json().catch(() => ({}));
+      if (!userResponse.ok) throw new Error(user.message || "GitHub could not verify this token.");
+      const repositories = [];
+      let nextUrl = "https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member";
+      let pages = 0;
+      while (nextUrl && pages < 10) {
+        const response = await fetch(nextUrl, { headers });
+        const page = await response.json().catch(() => []);
+        if (!response.ok) throw new Error(page.message || "Could not list repositories. Check token access and Metadata: Read permission.");
+        if (Array.isArray(page)) repositories.push(...page);
+        const link = response.headers.get("Link") || "";
+        const next = link.split(",").find(part => part.includes('rel="next"'));
+        nextUrl = next ? next.match(/<([^>]+)>/)?.[1] || null : null;
+        pages++;
+      }
+      const writable = repositories.filter(item => !item.archived && (item.permissions?.push || item.permissions?.admin || item.permissions?.maintain))
+        .map(item => ({ id: item.id, full_name: item.full_name, private: item.private, default_branch: item.default_branch || "main", size: item.size || 0 }));
+      setGithubRepos(writable);
+      setGithubUsername(user.login || "");
+      setGithubConnected(true);
+      if (githubRepo && !writable.some(item => item.full_name === githubRepo)) setGithubRepo("");
+      setSaveStatus("Connected to GitHub as @" + (user.login || "user") + ". Select a repository to continue.");
+      setError("");
+      if (!writable.length) throw new Error("GitHub connected, but no writable repositories were found. Give the token access to repositories and set Metadata: Read-only and Contents: Read and write.");
+    } finally {
+      setGithubRepoLoading(false);
+    }
+  }
+
   async function uploadZipToGithub(blob) {
-    if (!githubToken.trim()) throw new Error("Enter a GitHub fine-grained personal access token.");
-    const match = githubRepo.trim().match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
-    if (!match) throw new Error("Enter the repository as owner/repository.");
+    if (!githubToken.trim()) throw new Error("Connect GitHub first.");
+    if (!githubRepo) throw new Error("Select a destination repository first.");
+    const match = githubRepo.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+    if (!match) throw new Error("Choose a valid destination repository from the list.");
     const [, owner, repository] = match;
     const files = await unpackStoredZip(blob);
     if (files.length > 500) throw new Error("This export contains more than 500 files. Split the export into smaller uploads.");
@@ -414,29 +453,35 @@ export default function FigmaImporter({ session, onSignOut }) {
       if (!response.ok) throw new Error(payload.message || "GitHub API request failed (" + response.status + ").");
       return payload;
     };
-    await request("https://api.github.com/user");
     const repoInfo = await request(api);
-    const branch = githubBranch.trim() || repoInfo.default_branch;
-    if (!branch) throw new Error("Could not determine the destination branch.");
-    const branchRef = await request(api + "/git/ref/heads/" + encodeURIComponent(branch));
-    const baseCommit = await request(api + "/git/commits/" + branchRef.object.sha);
+    const branch = githubBranch.trim() || repoInfo.default_branch || "main";
     const folder = githubPath.trim().replace(/^\/+|\/+$/g, "").replace(/\.\./g, "");
-    if (folder.split("/").some(part => part === "." || part === "")) throw new Error("Enter a valid destination folder.");
+    if (folder && folder.split("/").some(part => part === "." || part === "")) throw new Error("Enter a valid destination folder.");
     const base64 = data => {
       let binary = "";
       const chunk = 0x8000;
       for (let i = 0; i < data.length; i += chunk) binary += String.fromCharCode(...data.subarray(i, i + chunk));
       return btoa(binary);
     };
-    setSaveStatus("Preparing " + files.length + " files for GitHub…");
+    setSaveStatus("Checking " + owner + "/" + repository + "…");
+    const refResponse = await fetch(api + "/git/ref/heads/" + encodeURIComponent(branch), { headers });
+    let baseCommit = null;
+    if (refResponse.ok) {
+      const ref = await refResponse.json();
+      baseCommit = await request(api + "/git/commits/" + ref.object.sha);
+    } else if (refResponse.status === 404 && Number(repoInfo.size || 0) === 0) {
+      baseCommit = null;
+    } else {
+      const refError = await refResponse.json().catch(() => ({}));
+      throw new Error(refResponse.status === 404 ? "Branch '" + branch + "' was not found. Choose the repository's default branch." : (refError.message || "Could not read the destination branch."));
+    }
+    setSaveStatus("Preparing " + files.length + " project files…");
     const entries = [];
-    const concurrency = 4;
-    for (let i = 0; i < files.length; i += concurrency) {
-      const batch = files.slice(i, i + concurrency);
+    for (let i = 0; i < files.length; i += 4) {
+      const batch = files.slice(i, i + 4);
       const created = await Promise.all(batch.map(async file => {
         const blobObject = await request(api + "/git/blobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: base64(file.data), encoding: "base64" })
         });
         return { path: [folder, file.path].filter(Boolean).join("/"), mode: "100644", type: "blob", sha: blobObject.sha };
@@ -445,22 +490,25 @@ export default function FigmaImporter({ session, onSignOut }) {
       setSaveStatus("Uploading files to GitHub… " + entries.length + " / " + files.length);
     }
     const tree = await request(api + "/git/trees", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base_tree: baseCommit.tree.sha, tree: entries })
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tree: entries, ...(baseCommit ? { base_tree: baseCommit.tree.sha } : {}) })
     });
     const commit = await request(api + "/git/commits", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Add FigmaSpecs project files (" + files.length + " files)", tree: tree.sha, parents: [baseCommit.sha] })
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Add FigmaSpecs project files (" + files.length + " files)", tree: tree.sha, parents: baseCommit ? [baseCommit.sha] : [] })
     });
-    await request(api + "/git/refs/heads/" + encodeURIComponent(branch), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sha: commit.sha })
-    });
-    setSaveStatus(files.length + " project files pushed to " + owner + "/" + repository + " in " + (folder || "repository root") + ".");
-    setGithubToken("");
+    if (baseCommit) {
+      await request(api + "/git/refs/heads/" + encodeURIComponent(branch), {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sha: commit.sha })
+      });
+    } else {
+      await request(api + "/git/refs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "refs/heads/" + branch, sha: commit.sha })
+      });
+    }
+    setSaveStatus(files.length + " individual files pushed to " + owner + "/" + repository + (folder ? " in " + folder : " at repository root") + ".");
     setGithubUploadOpen(false);
   }
 
@@ -530,8 +578,30 @@ export default function FigmaImporter({ session, onSignOut }) {
       {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
-        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button><button className="secondary-button" onClick={()=>githubConnected?downloadProjectZip(true):setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push files to GitHub":"Connect GitHub"}</button></div></div>
-        {githubUploadOpen && <div className="github-modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget){setGithubUploadOpen(false);setGithubToken("");}}}><section className="github-modal" role="dialog" aria-modal="true" aria-labelledby="github-upload-title"><div className="github-modal-head"><div><span className="github-modal-icon"><Github size={19}/></span><div><h3 id="github-upload-title">{githubConnected ? "GitHub connection" : "Connect GitHub"}</h3><p>Connect your GitHub account and choose where FigmaSpecs should place your project files.</p></div></div><button type="button" className="github-modal-close" onClick={()=>{setGithubUploadOpen(false);setGithubToken("");}} aria-label="Close"><X size={18}/></button></div><form onSubmit={async e=>{e.preventDefault();setGithubBusy(true);setError("");setSaveStatus("");try{const headers={Authorization:"Bearer "+githubToken.trim(),Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};const who=await fetch("https://api.github.com/user",{headers});const user=await who.json().catch(()=>({}));if(!who.ok)throw new Error(user.message||"GitHub token is invalid or expired.");const parts=githubRepo.trim().split("/");if(parts.length!==2||!parts[0]||!parts[1])throw new Error("Enter the repository as owner/repository.");const check=await fetch("https://api.github.com/repos/"+encodeURIComponent(parts[0])+"/"+encodeURIComponent(parts[1]),{headers});const info=await check.json().catch(()=>({}));if(!check.ok)throw new Error(info.message||"Repository not found or token has no access.");setGithubConnected(true);setGithubUsername(user.login||parts[0]);if(!githubBranch.trim())setGithubBranch(info.default_branch||"");if(design?.document){await downloadProjectZip(true);}else{setGithubUploadOpen(false);setSaveStatus("GitHub connected as @"+(user.login||parts[0])+". Import a Figma design, then choose Push files to GitHub.");}}catch(err){setError(err.message||"GitHub connection failed.");}finally{setGithubBusy(false);}}}><div><div className="token-label-row"><label htmlFor="github-personal-token">GitHub fine-grained personal access token</label><button type="button" className="token-help-toggle" onClick={()=>setShowGithubTokenHelp(v=>!v)} aria-expanded={showGithubTokenHelp}><CircleHelp size={13}/>{showGithubTokenHelp?"Hide guide":"How to find?"}</button></div><input id="github-personal-token" type="password" value={githubToken} onChange={e=>setGithubToken(e.target.value)} placeholder="github_pat_…" required autoComplete="off"/>{showGithubTokenHelp && <div className="token-help-panel"><b>Create a GitHub token</b><ol><li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">GitHub fine-grained tokens</a> and sign in.</li><li>Enter a token name and choose an expiration.</li><li>Under <b>Resource owner</b>, select the account or organization that owns the repository.</li><li>Under <b>Repository access</b>, choose <b>Only select repositories</b> and select the repository you will upload to.</li><li>Under <b>Repository permissions</b>, set <b>Contents</b> to <b>Read and write</b>. Keep other permissions at their defaults.</li><li>Click <b>Generate token</b> and copy it immediately. Paste it above.</li></ol><a className="token-doc-link" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">GitHub's official token guide <ArrowRight size={12}/></a><small>Choose the exact repository below. Never share your token with anyone.</small></div>}</div><small className="github-token-help">Use a fine-grained token with access to this repository and <b>Contents: Read and write</b>. The token is held only in this browser session and is not stored in your account.</small><label>Repository<input value={githubRepo} onChange={e=>setGithubRepo(e.target.value)} placeholder="owner/repository" required autoComplete="off"/></label><div className="github-modal-row"><label>Branch <span>(optional)</span><input value={githubBranch} onChange={e=>setGithubBranch(e.target.value)} placeholder="Default branch"/></label><label>Folder in repository<input value={githubPath} onChange={e=>setGithubPath(e.target.value)} placeholder="figmaspecs-exports"/></label></div><label>Commit message<input value={"Add FigmaSpecs project export"} readOnly/></label>{error && <div className="github-upload-error" role="alert"><CircleHelp size={14}/><span>{error}</span></div>}{saveStatus && <div className="github-upload-status" role="status">{saveStatus}</div>}<div className="github-modal-actions"><button type="button" className="secondary-button" onClick={()=>{setGithubUploadOpen(false);setGithubToken("");}}>Cancel</button><button type="submit" className="primary-small" disabled={githubBusy||!githubToken.trim()||!githubRepo.trim()}>{githubBusy?<LoaderCircle className="spin" size={15}/>:<Github size={15}/>} {githubBusy?"Uploading files…":"Upload project files to GitHub"}</button></div></form><p className="github-modal-foot">FigmaSpecs verifies your token and repository. After importing a design, it extracts the project and commits individual files and folders in one Git commit.</p></section></div>}\n        {saveStatus && <div className="save-status" role="status">{saveStatus}</div>}<div className="stat-grid"><Stat icon={<Layers3/>} label="Total layers" value={counts.layers}/><Stat icon={<Type/>} label="Text layers" value={counts.text}/><Stat icon={<ImageIcon/>} label="Image fills" value={counts.images}/><Stat icon={<Frame/>} label="Vector layers" value={counts.vectors}/></div>
+        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push files to GitHub":"Connect GitHub"}</button></div></div>
+        {githubUploadOpen && <div className="github-modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget)setGithubUploadOpen(false);}}><section className="github-modal" role="dialog" aria-modal="true" aria-labelledby="github-upload-title">
+          <div className="github-modal-head"><div><span className="github-modal-icon"><Github size={19}/></span><div><h3 id="github-upload-title">{githubConnected ? "GitHub connected" : "Connect GitHub"}</h3><p>{githubConnected ? "Choose the repository where FigmaSpecs should commit your project files." : "Connect your GitHub account first. You can select a repository in the next step."}</p></div></div><button type="button" className="github-modal-close" onClick={()=>setGithubUploadOpen(false)} aria-label="Close"><X size={18}/></button></div>
+          <form onSubmit={async e=>{e.preventDefault();setGithubBusy(true);setError("");try{if(!githubConnected){await connectGithub();}else{if(!githubRepo)throw new Error("Select a repository before continuing.");setGithubUploadOpen(false);setSaveStatus("GitHub ready: "+githubRepo+". Import a design and choose Push files to GitHub.");}}catch(err){setError(err.message||"GitHub connection failed.");}finally{setGithubBusy(false);}}}>
+            {!githubConnected ? <>
+              <div><div className="token-label-row"><label htmlFor="github-personal-token">GitHub fine-grained personal access token</label><button type="button" className="token-help-toggle" onClick={()=>setShowGithubTokenHelp(v=>!v)} aria-expanded={showGithubTokenHelp}><CircleHelp size={13}/>{showGithubTokenHelp?"Hide guide":"How to find?"}</button></div><input id="github-personal-token" type="password" value={githubToken} onChange={e=>setGithubToken(e.target.value)} placeholder="github_pat_…" required autoComplete="off"/>{showGithubTokenHelp && <div className="token-help-panel"><b>Create a GitHub token</b><ol><li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">GitHub fine-grained tokens</a> and sign in.</li><li>Enter a token name and choose an expiration.</li><li>Under <b>Resource owner</b>, select the account or organization that owns the repository.</li><li>Under <b>Repository access</b>, choose <b>All repositories</b> or select the repository you want to use.</li><li>Under <b>Repository permissions</b>, set <b>Metadata</b> to <b>Read-only</b> and <b>Contents</b> to <b>Read and write</b>.</li><li>Click <b>Generate token</b> and copy it immediately.</li></ol><a className="token-doc-link" href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens" target="_blank" rel="noreferrer">GitHub's official token guide <ArrowRight size={12}/></a><small>Your token stays in this browser session and is not saved to your FigmaSpecs profile.</small></div>}</div>
+              <small className="github-token-help">Required token permissions: Metadata (read-only) and Contents (read and write). The token must include the repositories you want to access.</small>
+            </> : <>
+              <div className="github-connected-banner"><span className="github-connected-check"><Check size={15}/></span><span>Connected as <b>@{githubUsername}</b></span><button type="button" onClick={()=>{setGithubConnected(false);setGithubRepos([]);setGithubRepo("");setGithubBranch("");setGithubToken("");setSaveStatus("");}}>Disconnect</button></div>
+              <label htmlFor="github-repository-select">Select repository</label>
+              <select id="github-repository-select" className="github-repository-select" value={githubRepo} onChange={e=>{const selectedRepo=githubRepos.find(r=>r.full_name===e.target.value);setGithubRepo(e.target.value);setGithubBranch(selectedRepo?.default_branch||"main");}} required>
+                <option value="">Choose a repository…</option>
+                {githubRepos.map(item=><option key={item.id} value={item.full_name}>{item.full_name}{item.private?" · Private":" · Public"}</option>)}
+              </select>
+              <div className="github-modal-row"><label>Branch<input value={githubBranch} onChange={e=>setGithubBranch(e.target.value)} placeholder="Default branch (main)"/></label><label>Folder in repository<input value={githubPath} onChange={e=>setGithubPath(e.target.value)} placeholder="figmaspecs-exports"/></label></div>
+              <small className="github-token-help">Empty repositories are supported. FigmaSpecs will create their first commit and branch automatically. Existing repositories receive a new commit that preserves their other files.</small>
+            </>}
+            {error && <div className="github-upload-error" role="alert"><CircleHelp size={14}/><span>{error}</span></div>}
+            {saveStatus && <div className="github-upload-status" role="status">{saveStatus}</div>}
+            <div className="github-modal-actions"><button type="button" className="secondary-button" onClick={()=>setGithubUploadOpen(false)}>Cancel</button><button type="submit" className="primary-small" disabled={githubBusy||(!githubConnected&&!githubToken.trim())||(githubConnected&&!githubRepos.length)}>{githubBusy?<LoaderCircle className="spin" size={15}/>:<Github size={15}/>} {githubBusy?(githubConnected?"Saving…":"Connecting…"):(githubConnected?"Save repository":"Connect GitHub")}</button></div>
+          </form>
+          <p className="github-modal-foot">{githubConnected?"After saving, import a Figma design and use Push files to GitHub. Every asset, JSON, CSS, JSX and README is committed as an individual file.":"First connect your token. FigmaSpecs will list repositories it can access, then you can choose one from a dropdown."}</p>
+        </section></div>}
+        {saveStatus && <div className="save-status" role="status">{saveStatus}</div>}<div className="stat-grid"><Stat icon={<Layers3/>} label="Total layers" value={counts.layers}/><Stat icon={<Type/>} label="Text layers" value={counts.text}/><Stat icon={<ImageIcon/>} label="Image fills" value={counts.images}/><Stat icon={<Frame/>} label="Vector layers" value={counts.vectors}/></div>
         <div className="inspector-layout">
           <section className="panel layers-panel"><div className="panel-heading"><div><Layers3 size={17}/><b>Layers</b><span className="count-pill">{counts.layers}</span></div></div><div className="layer-search"><Search size={15}/><input placeholder="Search layers..." value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><div className="layer-list">{query ? filteredNodes.slice(0,120).map(n => <button key={n.id} className={`layer-row ${selected===n.id?"selected":""}`} onClick={() => setSelected(n.id)}><NodeIcon type={n.type}/><span className="layer-name">{n.name}</span><span className="layer-type">{n.type}</span></button>) : renderTree(design.document)}</div></section>
           <section className="panel details-panel"><div className="detail-tabs"><button className={activeTab==="layers"?"active":""} onClick={()=>setActiveTab("layers")}>Properties</button><button className={activeTab==="assets"?"active":""} onClick={()=>setActiveTab("assets")}>Assets <span>{design.assets?.length || 0}</span></button></div>
