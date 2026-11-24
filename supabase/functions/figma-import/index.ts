@@ -183,7 +183,11 @@ Deno.serve(async (request: Request) => {
           const params = new URLSearchParams({ ids: ids.join(","), format, scale: "1" });
           const imageResponse = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
           const imagePayload = await imageResponse.json().catch(() => ({}));
-          if (!imageResponse.ok) throw new Error("Figma could not regenerate " + format.toUpperCase() + " assets (HTTP " + imageResponse.status + ").");
+          if (imageResponse.status === 429) {
+            const retryAfter = imageResponse.headers.get("Retry-After") || "60";
+            return reply({ message: `Figma rate limit reached while regenerating ${format.toUpperCase()} assets. Please wait ${retryAfter} seconds before retrying; do not repeatedly refresh or re-import.`, figmaStatus: 429, retryAfterSeconds: Number(retryAfter) || 60 }, 429);
+          }
+          if (!imageResponse.ok) throw new Error("Figma could not regenerate " + format.toUpperCase() + " assets (HTTP " + imageResponse.status + "): " + String(imagePayload.err || imagePayload.message || "Unknown Figma API error"));
           for (const asset of batch) {
             const nodeId = String(asset.nodeId || "").replace(/-/g, ":");
             const sourceUrl = imagePayload.images?.[nodeId];
