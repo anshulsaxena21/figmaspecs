@@ -403,16 +403,40 @@ export default function FigmaImporter({ session, onSignOut }) {
     setLoading(true);
     setSaveStatus("Recovering images and vectors from Figma…");
     try {
-      const recovered = await callFigmaFunction({ fileKey: savedDesign.fileKey });
-      const refreshedDesign = { ...recovered, fileKey: savedDesign.fileKey };
+      // Recover export candidates from the saved Figma document itself. Do not
+      // re-import the whole file here: that repeats the expensive /files call.
+      const nodes = walk([savedDesign.document]);
+      const vectorTypes = new Set(["VECTOR","BOOLEAN_OPERATION","RECTANGLE","ELLIPSE","STAR","POLYGON","LINE","REGULAR_POLYGON","SHAPE_WITH_TEXT"]);
+      const byId = new Map();
+      for (const node of nodes) {
+        if (!node?.id) continue;
+        const hasImageFill = (node.fills || []).some(fill => fill.type === "IMAGE" && fill.visible !== false);
+        const settings = (node.exportSettings || []).filter(setting => ["PNG","JPG","SVG"].includes(String(setting.format || "").toUpperCase()));
+        let format = null;
+        if (settings.length) format = String(settings[0].format).toLowerCase() === "svg" ? "svg" : "png";
+        else if (hasImageFill) format = "png";
+        else if (vectorTypes.has(node.type)) format = "svg";
+        if (!format) continue;
+        const safeName = String(node.name || "asset").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+        byId.set(node.id, { nodeId: node.id, name: `${safeName || "asset"}-${node.id.replace(/:/g, "-")}.${format}`, format });
+      }
+      const candidates = [...byId.values()];
+      if (!candidates.length) throw new Error("No exportable layers were found in this saved design. Re-import the original Figma URL.");
+      const recovered = await callFigmaFunction({ action: "export_assets", fileKey: savedDesign.fileKey, assets: candidates });
+      const recoveredAssets = (recovered.assets || []).filter(asset => asset.url && !asset.error);
+      if (!recoveredAssets.length) {
+        const failed = (recovered.assets || []).filter(asset => asset.error).length;
+        throw new Error(failed ? `Figma did not return any assets (${failed} candidates failed). Try again after the rate limit cools down.` : "Figma did not return any exportable assets.");
+      }
+      const refreshedDesign = { ...savedDesign, assets: recoveredAssets, fileKey: savedDesign.fileKey };
       const { error: updateError } = await supabase
         .from("figma_user_projects")
-        .update({ design_data: refreshedDesign.document, assets: refreshedDesign.assets || [], stats: { ...(refreshedDesign.stats || {}), fileKey: savedDesign.fileKey }, updated_at: new Date().toISOString() })
+        .update({ assets: recoveredAssets, stats: { ...(savedDesign.stats || {}), fileKey: savedDesign.fileKey }, updated_at: new Date().toISOString() })
         .eq("id", project.id);
       if (updateError) throw updateError;
       setDesign(refreshedDesign);
       setSavedProjects(items => items.map(item => item.id === project.id ? { ...item, savedAt: new Date().toISOString(), design: refreshedDesign } : item));
-      setSaveStatus(`Recovered ${(refreshedDesign.assets || []).length} assets and updated the saved project.`);
+      setSaveStatus(`Recovered ${recoveredAssets.length} assets and updated the saved project.`);
     } catch (err) {
       setSaveStatus("Opened saved project");
       setError("Could not recover this project's assets: " + err.message);
