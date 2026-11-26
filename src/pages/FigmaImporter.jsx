@@ -264,19 +264,42 @@ export default function FigmaImporter({ session, onSignOut }) {
   async function getFreshExportAssets() {
     const assets = design?.assets || [];
     if (!assets.length) return [];
-    const fileKey = design?.fileKey || parseFigmaUrl(figmaUrl).fileKey;
-    const result = await callFigmaFunction({
-      action: "export_assets",
-      fileKey,
-      assets: assets.map(({nodeId,name,format})=>({nodeId,name,format}))
-    });
-    const refreshed = new Map((result.assets || []).filter(asset=>asset.url && !asset.error).map(asset=>[asset.nodeId,asset]));
-    const missing = assets.filter(asset=>!refreshed.has(asset.nodeId));
-    if (missing.length) {
-      const details=(result.assets||[]).filter(asset=>asset.error).map(asset=>asset.name+": "+asset.error).join("; ");
-      throw new Error("Could not retrieve all Figma images and vectors ("+missing.length+" missing). "+(details||"Re-import the Figma design and try again."));
+    const resolved = new Map();
+
+    // First reuse files already persisted in Supabase Storage. Refreshing a
+    // signed Storage URL does not call Figma and does not consume its API quota.
+    const storedAssets = assets.filter(asset => asset.path && asset.stored !== false);
+    if (storedAssets.length) {
+      const storageResult = await callFigmaFunction({
+        action: "refresh_asset_urls",
+        assets: storedAssets.map(({nodeId,name,format,path})=>({nodeId,name,format,path}))
+      });
+      for (const asset of storageResult.assets || []) {
+        if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
+      }
     }
-    const ordered = assets.map(asset=>({...asset,...refreshed.get(asset.nodeId),stored:true}));
+
+    // Only assets that are not present in Storage are regenerated from Figma.
+    const missing = assets.filter(asset => !resolved.has(asset.nodeId));
+    if (missing.length) {
+      const fileKey = design?.fileKey || (figmaUrl ? parseFigmaUrl(figmaUrl).fileKey : null);
+      if (!fileKey) throw new Error("Some assets are not stored in Supabase and this saved project has no Figma file key. Re-import the original Figma URL to recover only those missing assets.");
+      const result = await callFigmaFunction({
+        action: "export_assets",
+        fileKey,
+        assets: missing.map(({nodeId,name,format})=>({nodeId,name,format}))
+      });
+      for (const asset of result.assets || []) {
+        if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
+      }
+    }
+
+    const unresolved = assets.filter(asset => !resolved.has(asset.nodeId));
+    if (unresolved.length) {
+      const names = unresolved.map(asset => asset.name || asset.nodeId).join(", ");
+      throw new Error("Could not retrieve " + unresolved.length + " asset(s): " + names + ". Stored assets were reused where possible; only missing assets require a valid Figma token.");
+    }
+    const ordered = assets.map(asset=>({...asset,...resolved.get(asset.nodeId),stored:true}));
     setDesign(current=>current?({...current,assets:ordered}):current);
     return ordered;
   }
