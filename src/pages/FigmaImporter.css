@@ -48,3 +48,12 @@
 .ai-handoff-note{margin:12px 0 0;color:#9299a4;font-size:14px;line-height:1.5}
 @media(max-width:900px){.ai-handoff-steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.ai-handoff-panel{padding:15px}.ai-handoff-heading h3{font-size:16px}.ai-handoff-steps{grid-template-columns:1fr}.ai-handoff-actions{display:grid}.ai-handoff-actions button{width:100%;justify-content:center}}
+
+/* Group secondary exports in a compact, accessible menu. */
+.more-exports-wrap{position:relative;display:flex;}
+.more-exports-toggle{white-space:nowrap;}
+.more-exports-menu{position:absolute;top:calc(100% + 7px);right:0;z-index:30;min-width:245px;padding:6px;background:#fff;border:1px solid #e7e9ee;border-radius:9px;box-shadow:0 12px 32px rgba(25,35,55,.14);display:grid;gap:3px;}
+.more-exports-menu button{width:100%;min-height:40px;border:0;background:transparent;border-radius:6px;padding:8px 10px;display:flex;align-items:center;justify-content:flex-start;gap:9px;color:#535a66;font:500 14px "DM Sans";text-align:left;cursor:pointer;}
+.more-exports-menu button:hover{background:#fff3ec;color:#d95708;}
+.more-exports-menu button:disabled{opacity:.5;cursor:not-allowed;}
+@media(max-width:600px){.more-exports-wrap{flex:1;}.more-exports-wrap>.secondary-button{width:100%;}}
