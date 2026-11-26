@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase, SUPABASE_PUBLISHABLE_KEY } from "../lib/supabase";
-import { Activity, ArrowDownToLine, ArrowRight, Box, Check, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Github, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, Sparkles, Type, X } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowRight, Box, Check, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, CircleHelp, Code2, Copy, FileImage, FileJson, Figma, Frame, Github, Image as ImageIcon, Layers3, Link2, LoaderCircle, LockKeyhole, Palette, Ruler, Search, Settings2, ShieldCheck, Sparkles, Type, X } from "lucide-react";
 
 const PROJECT_URL = "https://ovdxipfxychotaspfccl.supabase.co";
 const FUNCTION_URL = PROJECT_URL + "/functions/v1/figma-import";
@@ -119,6 +119,52 @@ function describeLayers(root, assets = []) {
   };
   visit(root); return rows;
 }
+function runDesignQualityAudit(nodes) {
+  const findings = [];
+  const add = (severity, category, title, detail, node) => findings.push({
+    id: `${node?.id || "document"}-${category}-${findings.length}`,
+    severity, category, title, detail,
+    nodeId: node?.id || null,
+    nodeName: node?.name || "Document"
+  });
+  const genericName = /^(frame|group|rectangle|ellipse|vector|line|polygon|star|component|instance)(\\s+\\d+)?$/i;
+  const siblingNames = new Map();
+  nodes.forEach(node => {
+    const name = (node.name || "").trim();
+    const parent = node.parent?.id || node.parentId || "root";
+    const key = parent + "::" + name.toLowerCase();
+    siblingNames.set(key, (siblingNames.get(key) || 0) + 1);
+  });
+  nodes.forEach(node => {
+    if (node.visible === false) return;
+    const name = (node.name || "").trim();
+    if (!name || genericName.test(name)) {
+      add("info", "Layer naming", "Rename this layer", "Use a descriptive name so the layer is easier to find and understand.", node);
+    }
+    if (node.type === "TEXT") {
+      const content = String(node.characters || "");
+      if (!content.trim()) add("warning", "Content", "Empty text layer", "This text layer has no visible content. Remove it or add the intended copy.", node);
+      const size = node.style?.fontSize;
+      if (typeof size === "number" && size < 14) {
+        add(size < 12 ? "error" : "warning", "Typography", size < 12 ? "Text is too small" : "Text is below 14px", `Font size is ${size}px. Review readability and aim for at least 14px for UI text.`, node);
+      }
+    }
+    if (node.type === "FRAME" && (node.children || []).length > 1 && (!node.layoutMode || node.layoutMode === "NONE")) {
+      add("warning", "Layout", "Frame is not using Auto Layout", "This frame has multiple children but no Auto Layout. Check whether a responsive layout would be more robust.", node);
+    }
+    if (node.layoutPositioning === "ABSOLUTE") {
+      add("warning", "Layout", "Absolutely positioned layer", "Absolute positioning can make layouts harder to adapt. Confirm this placement is intentional.", node);
+    }
+    if (node.type === "FRAME" && (node.children || []).length > 30) {
+      add("info", "Structure", "Large frame hierarchy", `This frame contains ${node.children.length} direct children. Consider grouping related elements for easier maintenance.`, node);
+    }
+  });
+  const errors = findings.filter(f => f.severity === "error").length;
+  const warnings = findings.filter(f => f.severity === "warning").length;
+  const infos = findings.filter(f => f.severity === "info").length;
+  const score = Math.max(0, 100 - errors * 12 - warnings * 5 - infos * 1);
+  return { findings, errors, warnings, infos, score };
+}
 function csvEscape(v){const x=v==null?"":typeof v==="object"?JSON.stringify(v):String(v);return '"'+x.replace(/"/g,'""')+'"';}
 function crc32(bytes){let c=-1;for(let i=0;i<bytes.length;i++){c^=bytes[i];for(let j=0;j<8;j++)c=(c>>>1)^(0xEDB88320&-(c&1));}return(c^-1)>>>0;}
 function zipBlob(files){
@@ -209,7 +255,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [promptStyling, setPromptStyling] = useState("Use the existing styling approach");
   const [promptViewport, setPromptViewport] = useState("Desktop, tablet and mobile");
   const [promptExtra, setPromptExtra] = useState("");
-  const [generatedPrompt, setGeneratedPrompt] = useState("");
+  const [generatedPrompt, setGeneratedPrompt] = useState("");\n  const [qualityAuditOpen, setQualityAuditOpen] = useState(false);
 
   const [figmaRateLimitBlocked, setFigmaRateLimitBlocked] = useState(false);
   useEffect(() => {
@@ -276,7 +322,7 @@ export default function FigmaImporter({ session, onSignOut }) {
     text: allNodes.filter(n => n.type === "TEXT").length,
     images: allNodes.filter(n => (n.fills || []).some(f => f.type === "IMAGE")).length,
     vectors: allNodes.filter(n => ["VECTOR","BOOLEAN_OPERATION"].includes(n.type)).length
-  }), [allNodes]);
+  }), [allNodes]);\n  const qualityAudit = useMemo(() => runDesignQualityAudit(allNodes), [allNodes]);
 
   async function importDesign(e) {
     e?.preventDefault(); setError(""); setImporting(true); setDesign(null); setSelected(null);
@@ -927,9 +973,21 @@ export default function FigmaImporter({ session, onSignOut }) {
           <p className="ai-handoff-note">The project ZIP and GitHub push include both AI handoff documents automatically.</p>
         </section>}
         <section className="new-tools-grid">
-          <button className="new-tool-card" onClick={()=>setComparisonOpen(v=>!v)}><span className="new-tool-icon"><Ruler size={19}/></span><span><b>Design vs Code Comparison</b><small>Overlay design and implementation screenshots.</small></span><ChevronDown size={16}/></button>
+          <button className="new-tool-card" onClick={()=>setQualityAuditOpen(v=>!v)}><span className="new-tool-icon"><ShieldCheck size={19}/></span><span><b>Design Quality Audit</b><small>Check typography, layout, naming and structure.</small></span><ChevronDown size={16}/></button>\n          <button className="new-tool-card" onClick={()=>setComparisonOpen(v=>!v)}><span className="new-tool-icon"><Ruler size={19}/></span><span><b>Design vs Code Comparison</b><small>Overlay design and implementation screenshots.</small></span><ChevronDown size={16}/></button>
           <button className="new-tool-card" onClick={()=>{setPromptBuilderOpen(v=>!v);setGeneratedPrompt("");}}><span className="new-tool-icon"><Sparkles size={19}/></span><span><b>AI Prompt Builder</b><small>Generate a project-aware implementation brief.</small></span><ChevronDown size={16}/></button>
         </section>
+        {qualityAuditOpen && <section className="tool-panel quality-audit-panel">
+          <div className="tool-panel-heading"><div><b>Design Quality Audit</b><small>Rule-based checks on the imported Figma layers. No extra Figma API calls or AI-generated guesses.</small></div><button className="icon-button" onClick={()=>setQualityAuditOpen(false)} aria-label="Close quality audit"><X size={16}/></button></div>
+          <div className="audit-score-row">
+            <div className="audit-score"><strong>{qualityAudit.score}</strong><span>/ 100</span><small>Design hygiene score</small></div>
+            <div className="audit-stat"><b className="audit-error">{qualityAudit.errors}</b><span>Errors</span></div>
+            <div className="audit-stat"><b className="audit-warning">{qualityAudit.warnings}</b><span>Warnings</span></div>
+            <div className="audit-stat"><b>{qualityAudit.infos}</b><span>Suggestions</span></div>
+          </div>
+          <div className="audit-toolbar"><span>{qualityAudit.findings.length} findings across {allNodes.length} layers</span><button className="secondary-button" onClick={()=>downloadText("FIGMASPECS-DESIGN-AUDIT.md",[`# Design Quality Audit — ${design?.name || "Figma design"}`,`\nScore: ${qualityAudit.score}/100`,`\n- Errors: ${qualityAudit.errors}`,`- Warnings: ${qualityAudit.warnings}`,`- Suggestions: ${qualityAudit.infos}`,...qualityAudit.findings.map(f=>`\n## [${f.severity.toUpperCase()}] ${f.title}\n- Category: ${f.category}\n- Layer: ${f.nodeName}\n- Detail: ${f.detail}`)].join("\n"),"text/markdown")}><ArrowDownToLine size={14}/> Export report</button></div>
+          {qualityAudit.findings.length ? <div className="audit-findings">{qualityAudit.findings.map(f=><article className={`audit-finding audit-${f.severity}`} key={f.id}><span className="audit-severity">{f.severity==="error"?"Error":f.severity==="warning"?"Warning":"Tip"}</span><div><b>{f.title}</b><p>{f.detail}</p><small>{f.category} · {f.nodeName}</small></div>{f.nodeId && <button className="audit-jump" onClick={()=>{setSelected(f.nodeId);setActiveTab("layers");}} title="Select this layer">View layer <ChevronRight size={13}/></button>}</article>)}</div> : <div className="audit-clean"><CheckCircle2 size={20}/><b>No issues found in the current rule set.</b><span>Your imported layers passed the available checks.</span></div>}
+          <p className="audit-disclaimer">This is a design-hygiene review, not a full accessibility or visual-regression test. Contrast, responsive behaviour and real-browser rendering need separate validation.</p>
+        </section>}
         {comparisonOpen && <section className="tool-panel">
           <div className="tool-panel-heading"><div><b>Design vs Code Comparison</b><small>Capture both at the same viewport size and scroll position.</small></div><button className="icon-button" onClick={()=>setComparisonOpen(false)} aria-label="Close comparison"><X size={16}/></button></div>
           <div className="comparison-upload-grid">
