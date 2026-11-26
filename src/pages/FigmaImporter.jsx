@@ -265,7 +265,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   }
   function exportJson() { downloadText("figma-design.json", JSON.stringify(design, null, 2), "application/json"); }
   function exportTokens() { downloadText("figma-tokens.css", cssTokens(allNodes), "text/css"); }
-  async function getFreshExportAssets(allowPartial = false) {
+  async function getFreshExportAssets(allowPartial = false, regenerateMissing = false) {
     const assets = design?.assets || [];
     if (!assets.length) return [];
     const resolved = new Map();
@@ -285,7 +285,7 @@ export default function FigmaImporter({ session, onSignOut }) {
 
     // Only assets that are not present in Storage are regenerated from Figma.
     const missing = assets.filter(asset => !resolved.has(asset.nodeId));
-    if (missing.length && !figmaRateLimitBlocked) {
+    if (missing.length && regenerateMissing && !figmaRateLimitBlocked) {
       const fileKey = design?.fileKey || (figmaUrl ? parseFigmaUrl(figmaUrl).fileKey : null);
       if (!fileKey) throw new Error("Some assets are not stored in Supabase and this saved project has no Figma file key. Re-import the original Figma URL to recover only those missing assets.");
       try {
@@ -799,23 +799,12 @@ export default function FigmaImporter({ session, onSignOut }) {
       ];
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
-      const exportAssets = await getFreshExportAssets(true);
-      let frameScreenshots = [];
-      let frameScreenshotWarning = "";
-      if (!frameScreenshotRetryBlocked) {
-        try {
-          frameScreenshots = await getFrameScreenshots();
-          if (frameScreenshots.failedFrames?.length) {
-            frameScreenshotWarning = "Skipped " + frameScreenshots.failedFrames.length + " frame screenshot(s): " + frameScreenshots.failedFrames.join(", ") + ". The rest of the project export will continue.";
-            setFrameScreenshotRetryBlocked(true);
-          }
-        } catch (screenshotError) {
-          frameScreenshotWarning = "Frame screenshots were skipped: " + (screenshotError.message || "Figma could not render one or more frames.") + " The rest of the project export will continue.";
-          if (/rate limit|429|retry-after/i.test(screenshotError.message || "")) { setFrameScreenshotRetryBlocked(true); setFigmaRateLimitBlocked(true); }
-        }
-      } else {
-        frameScreenshotWarning = "Frame screenshots were skipped because Figma previously rate-limited screenshot generation. The rest of the project export will continue.";
-      }
+      const exportAssets = await getFreshExportAssets(true, false);
+      // ZIP export reuses cached screenshots only; it never calls Figma to render them.
+      const frameScreenshots = (design.frameScreenshots || []).filter(item => item.path && item.url);
+      const frameScreenshotWarning = (design.frameScreenshots || []).length && !frameScreenshots.length
+        ? "Previously captured frame screenshots are not available in storage and were skipped."
+        : "";
       files.find(file=>file.name==="assets/asset-manifest.json").data=JSON.stringify(exportAssets,null,2);
       files.push({name:"design-data/frame-screenshots.json",data:JSON.stringify(frameScreenshots.map(({url,...meta})=>meta),null,2)});
       if (frameScreenshots.length) {
@@ -854,7 +843,7 @@ export default function FigmaImporter({ session, onSignOut }) {
         } catch (downloadError) {
           skippedFiles.push({name:asset.name || ("Asset " + (i+1)),reason:downloadError.message || "Download failed"});
         }
-        setGithubProgress({active:uploadToGithub,stage:"Preparing image and vector assets",current:downloadedAssets,total:exportAssets.length,percent:Math.round(3+(downloadedAssets/Math.max(exportAssets.length,1))*4),fileName:safeName});
+        if (uploadToGithub) setGithubProgress({active:true,stage:"Preparing image and vector assets",current:downloadedAssets,total:exportAssets.length,percent:Math.round(3+(downloadedAssets/Math.max(exportAssets.length,1))*4),fileName:asset.name || ""});
       }
       if(exportAssets.length && downloadedAssets===0 && !unavailableAssets.length) throw new Error("No image or vector assets could be downloaded. Check the asset storage and try again.");
       const safe=(design.name||"figma-project").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"figma-project";
