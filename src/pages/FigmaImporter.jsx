@@ -834,7 +834,8 @@ export default function FigmaImporter({ session, onSignOut }) {
         const bytes = new Uint8Array(await response.arrayBuffer());
         files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
       }
-      let downloadedAssets = 0;\n      const unavailableAssets = exportAssets.filter(asset => asset.unavailable);
+      let downloadedAssets = 0;
+      const unavailableAssets = exportAssets.filter(asset => asset.unavailable);
       for(let i=0;i<exportAssets.length;i++){
         const asset=exportAssets[i];
         if(!asset.url) continue;
