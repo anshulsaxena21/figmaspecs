@@ -159,6 +159,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [showFigmaTokenHelp, setShowFigmaTokenHelp] = useState(false);
   const [showGithubTokenHelp, setShowGithubTokenHelp] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [design, setDesign] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -240,7 +241,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   }), [allNodes]);
 
   async function importDesign(e) {
-    e?.preventDefault(); setError(""); setLoading(true); setDesign(null); setSelected(null);
+    e?.preventDefault(); setError(""); setImporting(true); setDesign(null); setSelected(null);
     try {
       if (!tokenStatus.hasToken) { setShowSettings(true); throw new Error("Connect your Figma personal access token in Connection settings first."); }
       const { fileKey, nodeId } = parseFigmaUrl(figmaUrl);
@@ -250,7 +251,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       if (root?.id) setSelected(root.id);
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
     } catch (err) { setError(err.message || "Something went wrong while importing the design."); }
-    finally { setLoading(false); }
+    finally { setImporting(false); }
   }
 
   function exportAssets() {
@@ -471,57 +472,9 @@ export default function FigmaImporter({ session, onSignOut }) {
     setSelected(savedDesign.document?.children?.[0]?.id || savedDesign.document?.id || null);
     setExpanded({ [savedDesign.document?.id]: true });
     setError("");
-    if (savedDesign.assets?.length) {
-      setSaveStatus("Opened saved project");
-      return;
-    }
-    if (!savedDesign.fileKey) {
-      setSaveStatus("Opened saved project");
-      setError("This saved project has no stored Figma file key and no saved assets. Re-import the original Figma URL to restore its images and vectors.");
-      return;
-    }
-    setLoading(true);
-    setSaveStatus("Recovering images and vectors from Figma…");
-    try {
-      // Recover export candidates from the saved Figma document itself. Do not
-      // re-import the whole file here: that repeats the expensive /files call.
-      const nodes = walk([savedDesign.document]);
-      const vectorTypes = new Set(["VECTOR","BOOLEAN_OPERATION","RECTANGLE","ELLIPSE","STAR","POLYGON","LINE","REGULAR_POLYGON","SHAPE_WITH_TEXT"]);
-      const byId = new Map();
-      for (const node of nodes) {
-        if (!node?.id) continue;
-        const hasImageFill = (node.fills || []).some(fill => fill.type === "IMAGE" && fill.visible !== false);
-        const settings = (node.exportSettings || []).filter(setting => ["PNG","JPG","SVG"].includes(String(setting.format || "").toUpperCase()));
-        let format = null;
-        if (settings.length) format = String(settings[0].format).toLowerCase() === "svg" ? "svg" : "png";
-        else if (hasImageFill) format = "png";
-        else if (vectorTypes.has(node.type)) format = "svg";
-        if (!format) continue;
-        const safeName = String(node.name || "asset").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
-        byId.set(node.id, { nodeId: node.id, name: `${safeName || "asset"}-${node.id.replace(/:/g, "-")}.${format}`, format });
-      }
-      const candidates = [...byId.values()];
-      if (!candidates.length) throw new Error("No exportable layers were found in this saved design. Re-import the original Figma URL.");
-      const recovered = await callFigmaFunction({ action: "export_assets", fileKey: savedDesign.fileKey, assets: candidates });
-      const recoveredAssets = (recovered.assets || []).filter(asset => asset.url && !asset.error);
-      if (!recoveredAssets.length) {
-        const failed = (recovered.assets || []).filter(asset => asset.error).length;
-        throw new Error(failed ? `Figma did not return any assets (${failed} candidates failed). Try again after the rate limit cools down.` : "Figma did not return any exportable assets.");
-      }
-      const refreshedDesign = { ...savedDesign, assets: recoveredAssets, fileKey: savedDesign.fileKey };
-      const { error: updateError } = await supabase
-        .from("figma_user_projects")
-        .update({ assets: recoveredAssets, stats: { ...(savedDesign.stats || {}), fileKey: savedDesign.fileKey }, updated_at: new Date().toISOString() })
-        .eq("id", project.id);
-      if (updateError) throw updateError;
-      setDesign(refreshedDesign);
-      setSavedProjects(items => items.map(item => item.id === project.id ? { ...item, savedAt: new Date().toISOString(), design: refreshedDesign } : item));
-      setSaveStatus(`Recovered ${recoveredAssets.length} assets and updated the saved project.`);
-    } catch (err) {
-      setSaveStatus("Opened saved project");
-      setError("Could not recover this project's assets: " + err.message);
-    } finally {
-      setLoading(false);
+    setSaveStatus("Opened saved project");
+    if (!savedDesign.assets?.length) {
+      setError("This saved project has no stored image/vector assets. It was opened without contacting Figma; missing assets can only be restored when Figma access is available.");
     }
   }
   async function removeSavedProject(id) {
@@ -890,7 +843,7 @@ export default function FigmaImporter({ session, onSignOut }) {
         <div className="import-fields">
           <label className="url-field"><Link2 size={17}/><input value={figmaUrl} onChange={e => setFigmaUrl(e.target.value)} placeholder="Paste Figma design URL here..." aria-label="Figma design URL"/></label>
           <div className="token-connected"><LockKeyhole size={16}/><span>{tokenStatus.hasToken ? "Figma token securely connected" : "Connect Figma in settings"}</span><button type="button" onClick={() => setShowSettings(true)}>Manage</button></div>
-          <button className="import-button" disabled={loading}>{loading ? <LoaderCircle className="spin" size={17}/> : <ArrowRight size={17}/>} {loading ? "Reading design..." : "Import design"}</button>
+          <button className="import-button" disabled={importing}>{importing ? <LoaderCircle className="spin" size={17}/> : <ArrowRight size={17}/>} {importing ? "Reading design..." : "Import design"}</button>
         </div>
         {error && <div className="error-message"><CircleHelp size={15}/>{error}</div>}
         <div className="import-foot"><span><Check size={13}/> No Figma MCP required</span><span><Check size={13}/> No Dev Mode dependency</span><button type="button" onClick={() => setShowSettings(v => !v)}>Connection settings <ChevronDown size={13}/></button></div>
