@@ -169,6 +169,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [savedProjects, setSavedProjects] = useState([]);
   const [saveStatus, setSaveStatus] = useState("");
   const [storageReady, setStorageReady] = useState(false);
+  const [showAiHandoff, setShowAiHandoff] = useState(false);
   useEffect(() => {
     let alive = true;
     PROJECT_DB_NAME = "figmaspecs-" + session.user.id;
@@ -718,12 +719,67 @@ export default function FigmaImporter({ session, onSignOut }) {
     setGithubUploadOpen(false);
   }
 
+  function buildAiImplementationPrompt() {
+    return [
+      "# FigmaSpecs — AI Website Implementation Brief", "",
+      "Act as a senior frontend engineer, UI/UX engineer and design-systems specialist. Recreate the supplied Figma design as a responsive, production-quality website.",
+      "", "## Inspect before coding",
+      "1. Inspect the connected GitHub repository, branch, package scripts, framework, dependencies, routes and existing components.",
+      "2. Review every PNG in reference-frames/ and map it using design-data/frame-screenshots.json.",
+      "3. Read design-data/complete-design.json for the complete Figma node tree.",
+      "4. Read design-data/layer-descriptions.json and layer-descriptions.csv for hierarchy, measurements, Auto Layout and typography.",
+      "5. Read design-data/design-tokens.css and use its tokens.",
+      "6. Inspect assets/asset-manifest.json and use original files in assets/images/ and assets/vectors/.",
+      "7. Review code/ as reference material, not as an assumed complete production implementation.",
+      "", "## Implementation requirements",
+      "- Explain repository architecture, available frames, assets, tokens and missing inputs before editing; provide a concise plan.",
+      "- Preserve the existing framework, architecture, working features and conventions. Do not rewrite unrelated code.",
+      "- Build reusable, focused components with semantic HTML, accessibility and maintainable CSS.",
+      "- Match dimensions, spacing, typography, colors, borders, shadows, radii, image crops, alignment and visual hierarchy closely.",
+      "- Use supplied assets and fonts. Never substitute placeholders, stock imagery, emoji or invented logos when originals exist.",
+      "- Implement responsive desktop, tablet and mobile layouts. Where responsive references are absent, adapt carefully without changing the design language.",
+      "- Do not invent important business logic or interactions. Ask when requirements are unclear.",
+      "- Avoid duplicated CSS, oversized components, unnecessary dependencies, dead code, unexplained absolute positioning and console errors.",
+      "", "## Verification",
+      "Run the existing build and tests. Check imports, missing assets, console errors, accessibility, interactions, overflow and responsive layouts. Compare rendered pages against supplied screenshots at matching viewport sizes and correct mismatches section by section. Never claim pixel-perfect accuracy without actual visual comparison.",
+      "", "## GitHub safety and final report",
+      "Inspect the working tree and target branch before changes. Preserve unrelated work. Report exactly what changed and never claim a commit, push or deployment unless it succeeded.",
+      "At completion, report completed sections, components, asset usage, responsive status, build/test results, remaining visual differences, missing assets and questions.",
+      "", "## Project context",
+      "Figma project: ${design?.name || "Untitled Figma project"}",
+      "Detected layers: ${counts.layers}; image fills: ${counts.images}; vector layers: ${counts.vectors}",
+      "", "Primary rule: screenshots are the visual reference, Figma JSON/layer data is structural evidence, and supplied asset files are the source of truth. Achieve visual fidelity without sacrificing code quality or existing functionality."
+    ].join("\n");
+  }
+  function buildAiSetupGuide() {
+    return [
+      "# FigmaSpecs AI Handoff Setup", "",
+      "## 1. Upload the export to GitHub",
+      "Create or choose a repository and upload the complete FigmaSpecs export. Preserve reference-frames/, assets/, design-data/ and code/ folders and all filenames.",
+      "", "## 2. Connect GitHub to ChatGPT",
+      "Connect GitHub from ChatGPT Settings > Apps / Connectors and authorize access to the target repository. Ask ChatGPT to inspect the repository before editing.",
+      "", "## 3. Upload design context to ChatGPT",
+      "Attach all reference-frame PNGs and these files: design-data/complete-design.json, frame-screenshots.json, layer-descriptions.json, design-tokens.css and assets/asset-manifest.json. For large projects, upload in manageable batches. Keep GitHub as the source of truth for the full asset library.",
+      "", "## 4. Start implementation",
+      "Copy AI-IMPLEMENTATION-PROMPT.md into the same ChatGPT conversation. Ask ChatGPT to inspect the repository and explain its plan before editing.",
+      "", "## 5. Verify",
+      "Ask ChatGPT to run the build/tests, check asset paths and responsive layouts, and compare rendered pages against supplied screenshots. Review changes before accepting them.",
+      "", "Note: Connector availability and permissions depend on your account and workspace. Never share private tokens in chat or commit secrets to GitHub."
+    ].join("\n");
+  }
+  function downloadAiHandoffFiles() {
+    downloadText("AI-IMPLEMENTATION-PROMPT.md", buildAiImplementationPrompt(), "text/markdown");
+    downloadText("AI-SETUP-GUIDE.md", buildAiSetupGuide(), "text/markdown");
+  }
+
   async function downloadProjectZip(uploadToGithub = false) {
     if(!design?.document)return;
     setLoading(true);setError("");
     try{
       const docs=describeLayers(design.document,design.assets||[]),keys=["id","name","type","parent","hierarchy","position","layout","typography","appearance","text","asset"];
       const files=[
+        {name:"AI-IMPLEMENTATION-PROMPT.md",data:buildAiImplementationPrompt()},
+        {name:"AI-SETUP-GUIDE.md",data:buildAiSetupGuide()},
         {name:"design-data/complete-design.json",data:JSON.stringify(design,null,2)},
         {name:"design-data/layer-descriptions.json",data:JSON.stringify(docs,null,2)},
         {name:"design-data/layer-descriptions.csv",data:[keys.join(","),...docs.map(row=>keys.map(k=>csvEscape(row[k])).join(","))].join("\n")},
@@ -812,7 +868,18 @@ export default function FigmaImporter({ session, onSignOut }) {
       {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
-        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push files to GitHub":"Connect GitHub"}</button></div></div>
+        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small>{design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={()=>setShowAiHandoff(v=>!v)}><Sparkles size={15}/> AI Handoff</button><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="secondary-button" onClick={exportJson}><FileJson size={15}/> Export JSON</button><button className="secondary-button" onClick={exportTokens}><Code2 size={15}/> CSS tokens</button><button className="secondary-button" onClick={exportReact} disabled={loading}><Code2 size={15}/> React + CSS ZIP</button><button className="secondary-button" onClick={exportLayerDocs}><Layers3 size={15}/> Layer docs</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download project ZIP"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push files to GitHub":"Connect GitHub"}</button></div></div>
+        {showAiHandoff && <section className="ai-handoff-panel">
+          <div className="ai-handoff-heading"><div><span className="eyebrow">AI-READY DEVELOPMENT PACKAGE</span><h3>Take this design from Figma to a working website</h3><p>Upload the export to GitHub, connect that repository to ChatGPT, then provide the visual references and implementation prompt.</p></div><button className="icon-button" onClick={()=>setShowAiHandoff(false)} aria-label="Close AI handoff"><X size={17}/></button></div>
+          <div className="ai-handoff-steps">
+            <article><b><Github size={16}/> 1. Upload to GitHub</b><p>Push the complete export folder, preserving reference frames, assets, design data and code.</p></article>
+            <article><b><Link2 size={16}/> 2. Connect GitHub to ChatGPT</b><p>Authorize ChatGPT to access the target repository and ask it to inspect the codebase first.</p></article>
+            <article><b><FileImage size={16}/> 3. Upload design context</b><p>Attach frame PNGs plus complete-design.json, frame-screenshots.json, layer-descriptions.json, design-tokens.css and asset-manifest.json.</p></article>
+            <article><b><Sparkles size={16}/> 4. Paste the prompt</b><p>Use AI-IMPLEMENTATION-PROMPT.md to guide visual accuracy, responsive behaviour, code quality and verification.</p></article>
+          </div>
+          <div className="ai-handoff-actions"><button className="secondary-button" onClick={()=>downloadText("AI-IMPLEMENTATION-PROMPT.md",buildAiImplementationPrompt(),"text/markdown")}><Copy size={14}/> Download implementation prompt</button><button className="secondary-button" onClick={()=>downloadText("AI-SETUP-GUIDE.md",buildAiSetupGuide(),"text/markdown")}><FileJson size={14}/> Download setup guide</button><button className="primary-small" onClick={downloadAiHandoffFiles}><ArrowDownToLine size={14}/> Download both guides</button></div>
+          <p className="ai-handoff-note">The project ZIP and GitHub push include both AI handoff documents automatically.</p>
+        </section>}
         {githubUploadOpen && <div className="github-modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget)setGithubUploadOpen(false);}}><section className="github-modal" role="dialog" aria-modal="true" aria-labelledby="github-upload-title">
           <div className="github-modal-head"><div><span className="github-modal-icon"><Github size={19}/></span><div><h3 id="github-upload-title">{githubConnected ? "GitHub connected" : "Connect GitHub"}</h3><p>{githubConnected ? "Choose the repository where FigmaSpecs should commit your project files." : "Connect your GitHub account first. You can select a repository in the next step."}</p></div></div><button type="button" className="github-modal-close" onClick={()=>setGithubUploadOpen(false)} aria-label="Close"><X size={18}/></button></div>
           <form onSubmit={async e=>{e.preventDefault();setGithubBusy(true);setError("");try{if(!githubConnected){await connectGithub();}else{if(!githubRepo)throw new Error("Select a repository before continuing.");setGithubUploadOpen(false);setSaveStatus("GitHub ready: "+githubRepo+". Import a design and choose Push files to GitHub.");}}catch(err){setError(err.message||"GitHub connection failed.");}finally{setGithubBusy(false);}}}>
