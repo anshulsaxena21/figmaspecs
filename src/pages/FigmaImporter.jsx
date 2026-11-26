@@ -171,6 +171,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [storageReady, setStorageReady] = useState(false);
   const [showAiHandoff, setShowAiHandoff] = useState(false);
   const [showMoreExports, setShowMoreExports] = useState(false);
+  const [frameScreenshotRetryBlocked, setFrameScreenshotRetryBlocked] = useState(false);
   useEffect(() => {
     let alive = true;
     PROJECT_DB_NAME = "figmaspecs-" + session.user.id;
@@ -791,10 +792,25 @@ export default function FigmaImporter({ session, onSignOut }) {
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
       const exportAssets = await getFreshExportAssets();
-      const frameScreenshots = await getFrameScreenshots();
+      let frameScreenshots = [];
+      let frameScreenshotWarning = "";
+      if (!frameScreenshotRetryBlocked) {
+        try {
+          frameScreenshots = await getFrameScreenshots();
+        } catch (screenshotError) {
+          frameScreenshotWarning = "Frame screenshots were skipped: " + (screenshotError.message || "Figma could not render one or more frames.") + " The rest of the project export will continue.";
+          if (/rate limit|429|retry-after/i.test(screenshotError.message || "")) setFrameScreenshotRetryBlocked(true);
+        }
+      } else {
+        frameScreenshotWarning = "Frame screenshots were skipped because Figma previously rate-limited screenshot generation. The rest of the project export will continue.";
+      }
       files.find(file=>file.name==="assets/asset-manifest.json").data=JSON.stringify(exportAssets,null,2);
       files.push({name:"design-data/frame-screenshots.json",data:JSON.stringify(frameScreenshots.map(({url,...meta})=>meta),null,2)});
-      files.find(file=>file.name==="README.md").data += "- reference-frames/: high-resolution PNG screenshots of Figma frames for visual AI reference\n- design-data/frame-screenshots.json: frame names, node IDs and dimensions\n";
+      if (frameScreenshots.length) {
+        files.find(file=>file.name==="README.md").data += "- reference-frames/: high-resolution PNG screenshots of Figma frames for visual AI reference\n- design-data/frame-screenshots.json: frame names, node IDs and dimensions\n";
+      } else {
+        files.find(file=>file.name==="README.md").data += "- Frame screenshots were not available for this export; the complete design JSON and layer documentation are included.\n";
+      }
       files.find(file=>file.name==="design-data/complete-design.json").data=JSON.stringify({...design,assets:exportAssets},null,2);
       const docsWithAssets=describeLayers(design.document,exportAssets);
       files.find(file=>file.name==="design-data/layer-descriptions.json").data=JSON.stringify(docsWithAssets,null,2);
