@@ -200,6 +200,17 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [showAiHandoff, setShowAiHandoff] = useState(false);
   const [showMoreExports, setShowMoreExports] = useState(false);
   const [frameScreenshotRetryBlocked, setFrameScreenshotRetryBlocked] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [referenceImage, setReferenceImage] = useState("");
+  const [implementationImage, setImplementationImage] = useState("");
+  const [comparisonOpacity, setComparisonOpacity] = useState(50);
+  const [promptBuilderOpen, setPromptBuilderOpen] = useState(false);
+  const [promptFramework, setPromptFramework] = useState("Detect from repository");
+  const [promptStyling, setPromptStyling] = useState("Use the existing styling approach");
+  const [promptViewport, setPromptViewport] = useState("Desktop, tablet and mobile");
+  const [promptExtra, setPromptExtra] = useState("");
+  const [generatedPrompt, setGeneratedPrompt] = useState("");
+
   const [figmaRateLimitBlocked, setFigmaRateLimitBlocked] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -725,6 +736,37 @@ export default function FigmaImporter({ session, onSignOut }) {
       "", "Primary rule: screenshots are the visual reference, Figma JSON/layer data is structural evidence, and supplied asset files are the source of truth. Achieve visual fidelity without sacrificing code quality or existing functionality."
     ].join("\n");
   }
+  function buildCustomImplementationPrompt() {
+    return [
+      "# FigmaSpecs — Custom AI Implementation Prompt", "",
+      "Act as a senior frontend engineer and UI implementation specialist. Implement the imported Figma design with high visual fidelity.",
+      "", "## Project context",
+      "Figma file: " + (design?.name || "Untitled"),
+      "Frame: " + (design?.frameName || design?.document?.name || "Imported design"),
+      "Detected layers: " + counts.layers + "; text: " + counts.text + "; images: " + counts.images + "; vectors: " + counts.vectors,
+      "Target framework: " + promptFramework,
+      "Styling approach: " + promptStyling,
+      "Responsive targets: " + promptViewport,
+      "", "## Workflow",
+      "1. Inspect the existing repository, scripts, routes, dependencies and components before editing.",
+      "2. Review the supplied Figma JSON, layer descriptions, design tokens, assets and reference screenshots.",
+      "3. Explain the plan and identify missing assets or ambiguous requirements before coding.",
+      "4. Reuse existing architecture, components and dependencies. Do not rewrite unrelated files.",
+      "5. Match dimensions, spacing, typography, colors, shadows, radii, borders, image crops and alignment.",
+      "6. Implement responsive behaviour for " + promptViewport + ".",
+      "7. Keep code semantic, accessible, reusable and maintainable. Avoid placeholder assets and unnecessary dependencies.",
+      "", "## Styling", promptStyling + ".",
+      "", "## Additional requirements", promptExtra.trim() || "None supplied.",
+      "", "## Verification",
+      "Run the available build and tests. Check broken assets, console errors, interactions and responsive overflow. Compare screenshots at matching viewport sizes and correct visible differences. Never claim pixel-perfect accuracy without visual verification.",
+      "Preserve unrelated work and report changed files, test results and remaining issues."
+    ].join("\n");
+  }
+  async function copyCustomPrompt() {
+    const value = generatedPrompt || buildCustomImplementationPrompt();
+    try { await navigator.clipboard.writeText(value); setCopied(true); window.setTimeout(()=>setCopied(false),1800); }
+    catch { downloadText("FIGMASPECS-CUSTOM-PROMPT.md",value,"text/markdown"); }
+  }
   function buildAiSetupGuide() {
     return [
       "# FigmaSpecs AI Handoff Setup", "",
@@ -883,6 +925,29 @@ export default function FigmaImporter({ session, onSignOut }) {
           </div>
           <div className="ai-handoff-actions"><button className="secondary-button" onClick={()=>downloadText("AI-IMPLEMENTATION-PROMPT.md",buildAiImplementationPrompt(),"text/markdown")}><Copy size={14}/> Download implementation prompt</button><button className="secondary-button" onClick={()=>downloadText("AI-SETUP-GUIDE.md",buildAiSetupGuide(),"text/markdown")}><FileJson size={14}/> Download setup guide</button><button className="primary-small" onClick={downloadAiHandoffFiles}><ArrowDownToLine size={14}/> Download both guides</button></div>
           <p className="ai-handoff-note">The project ZIP and GitHub push include both AI handoff documents automatically.</p>
+        </section>}
+        <section className="new-tools-grid">
+          <button className="new-tool-card" onClick={()=>setComparisonOpen(v=>!v)}><span className="new-tool-icon"><Ruler size={19}/></span><span><b>Design vs Code Comparison</b><small>Overlay design and implementation screenshots.</small></span><ChevronDown size={16}/></button>
+          <button className="new-tool-card" onClick={()=>{setPromptBuilderOpen(v=>!v);setGeneratedPrompt("");}}><span className="new-tool-icon"><Sparkles size={19}/></span><span><b>AI Prompt Builder</b><small>Generate a project-aware implementation brief.</small></span><ChevronDown size={16}/></button>
+        </section>
+        {comparisonOpen && <section className="tool-panel">
+          <div className="tool-panel-heading"><div><b>Design vs Code Comparison</b><small>Capture both at the same viewport size and scroll position.</small></div><button className="icon-button" onClick={()=>setComparisonOpen(false)} aria-label="Close comparison"><X size={16}/></button></div>
+          <div className="comparison-upload-grid">
+            <label>Figma reference screenshot<input type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)setReferenceImage(URL.createObjectURL(f));}}/></label>
+            <label>Implemented website screenshot<input type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)setImplementationImage(URL.createObjectURL(f));}}/></label>
+          </div>
+          {referenceImage && implementationImage ? <><div className="comparison-stage"><img src={referenceImage} alt="Figma reference screenshot"/><img className="comparison-overlay" src={implementationImage} alt="Website implementation overlay" style={{opacity:comparisonOpacity/100}}/></div><label className="comparison-slider">Implementation overlay <input type="range" min="0" max="100" value={comparisonOpacity} onChange={e=>setComparisonOpacity(Number(e.target.value))}/><b>{comparisonOpacity}%</b></label></> : <p className="comparison-empty">Upload both screenshots to compare them with an adjustable overlay.</p>}
+        </section>}
+        {promptBuilderOpen && <section className="tool-panel prompt-builder">
+          <div className="tool-panel-heading"><div><b>AI Prompt Builder</b><small>Uses this import's project name and extracted layer counts.</small></div><button className="icon-button" onClick={()=>setPromptBuilderOpen(false)} aria-label="Close prompt builder"><X size={16}/></button></div>
+          <div className="prompt-fields-grid">
+            <label>Target framework<select value={promptFramework} onChange={e=>setPromptFramework(e.target.value)}><option>Detect from repository</option><option>React + Vite</option><option>Next.js</option><option>HTML, CSS and JavaScript</option><option>Vue</option><option>Angular</option></select></label>
+            <label>Styling approach<select value={promptStyling} onChange={e=>setPromptStyling(e.target.value)}><option>Use the existing styling approach</option><option>CSS Modules</option><option>Plain CSS</option><option>Bootstrap</option><option>Tailwind CSS</option><option>Styled Components</option></select></label>
+            <label>Responsive targets<select value={promptViewport} onChange={e=>setPromptViewport(e.target.value)}><option>Desktop, tablet and mobile</option><option>Desktop only</option><option>Mobile first, then tablet and desktop</option><option>Tablet and desktop</option></select></label>
+            <label className="prompt-extra">Additional instructions<textarea rows="3" value={promptExtra} onChange={e=>setPromptExtra(e.target.value)} placeholder="e.g. Reuse the existing header and footer; use GSAP for subtle animations…"/></label>
+          </div>
+          <div className="prompt-builder-actions"><button className="primary-small" onClick={()=>setGeneratedPrompt(buildCustomImplementationPrompt())}><Sparkles size={15}/> Generate prompt</button>{generatedPrompt && <><button className="secondary-button" onClick={copyCustomPrompt}><Copy size={14}/> Copy prompt</button><button className="secondary-button" onClick={()=>downloadText("FIGMASPECS-CUSTOM-PROMPT.md",generatedPrompt,"text/markdown")}><ArrowDownToLine size={14}/> Download .md</button></>}</div>
+          {generatedPrompt && <textarea className="generated-prompt-output" readOnly value={generatedPrompt} rows="12" aria-label="Generated implementation prompt"/>}
         </section>}
         {githubUploadOpen && <div className="github-modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget)setGithubUploadOpen(false);}}><section className="github-modal" role="dialog" aria-modal="true" aria-labelledby="github-upload-title">
           <div className="github-modal-head"><div><span className="github-modal-icon"><Github size={19}/></span><div><h3 id="github-upload-title">{githubConnected ? "GitHub connected" : "Connect GitHub"}</h3><p>{githubConnected ? "Choose the repository where FigmaSpecs should commit your project files." : "Connect your GitHub account first. You can select a repository in the next step."}</p></div></div><button type="button" className="github-modal-close" onClick={()=>setGithubUploadOpen(false)} aria-label="Close"><X size={18}/></button></div>
