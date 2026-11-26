@@ -746,8 +746,8 @@ export default function FigmaImporter({ session, onSignOut }) {
       "Inspect the working tree and target branch before changes. Preserve unrelated work. Report exactly what changed and never claim a commit, push or deployment unless it succeeded.",
       "At completion, report completed sections, components, asset usage, responsive status, build/test results, remaining visual differences, missing assets and questions.",
       "", "## Project context",
-      "Figma project: ${design?.name || "Untitled Figma project"}",
-      "Detected layers: ${counts.layers}; image fills: ${counts.images}; vector layers: ${counts.vectors}",
+      "Figma project: " + (design?.name || "Untitled Figma project"),
+      "Detected layers: " + counts.layers + "; image fills: " + counts.images + "; vector layers: " + counts.vectors,
       "", "Primary rule: screenshots are the visual reference, Figma JSON/layer data is structural evidence, and supplied asset files are the source of truth. Achieve visual fidelity without sacrificing code quality or existing functionality."
     ].join("\n");
   }
