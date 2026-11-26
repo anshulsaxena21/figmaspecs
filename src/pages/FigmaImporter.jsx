@@ -266,53 +266,37 @@ export default function FigmaImporter({ session, onSignOut }) {
   }
   function exportJson() { downloadText("figma-design.json", JSON.stringify(design, null, 2), "application/json"); }
   function exportTokens() { downloadText("figma-tokens.css", cssTokens(allNodes), "text/css"); }
-  async function getFreshExportAssets(allowPartial = false, regenerateMissing = false) {
+  async function getFreshExportAssets(allowPartial = false) {
+    // Export is deliberately Figma-API-free. Reuse the assets captured at
+    // import time; refresh only their Supabase Storage signed URLs.
     const assets = design?.assets || [];
     if (!assets.length) return [];
     const resolved = new Map();
-
-    // First reuse files already persisted in Supabase Storage. Refreshing a
-    // signed Storage URL does not call Figma and does not consume its API quota.
     const storedAssets = assets.filter(asset => asset.path && asset.stored !== false);
     if (storedAssets.length) {
-      const storageResult = await callFigmaFunction({
-        action: "refresh_asset_urls",
-        assets: storedAssets.map(({nodeId,name,format,path})=>({nodeId,name,format,path}))
-      });
-      for (const asset of storageResult.assets || []) {
-        if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
-      }
-    }
-
-    // Only assets that are not present in Storage are regenerated from Figma.
-    const missing = assets.filter(asset => !resolved.has(asset.nodeId));
-    if (missing.length && regenerateMissing && !figmaRateLimitBlocked) {
-      const fileKey = design?.fileKey || (figmaUrl ? parseFigmaUrl(figmaUrl).fileKey : null);
-      if (!fileKey) throw new Error("Some assets are not stored in Supabase and this saved project has no Figma file key. Re-import the original Figma URL to recover only those missing assets.");
       try {
-        const result = await callFigmaFunction({
-          action: "export_assets",
-          fileKey,
-          assets: missing.map(({nodeId,name,format})=>({nodeId,name,format}))
+        const storageResult = await callFigmaFunction({
+          action: "refresh_asset_urls",
+          assets: storedAssets.map(({nodeId,name,format,path})=>({nodeId,name,format,path}))
         });
-        for (const asset of result.assets || []) {
+        for (const asset of storageResult.assets || []) {
           if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
         }
-      } catch (assetError) {
-        if (/rate limit|429|retry-after/i.test(assetError.message || "")) setFigmaRateLimitBlocked(true);
-        if (!allowPartial) throw assetError;
+      } catch (error) {
+        // Keep still-valid URLs from the original import if storage refresh is
+        // temporarily unavailable. Never fall back to the Figma API here.
       }
     }
-
-    const unresolved = assets.filter(asset => !resolved.has(asset.nodeId));
+    const ordered = assets.map(asset => {
+      const refreshed = resolved.get(asset.nodeId);
+      const usableUrl = refreshed?.url || asset.url || null;
+      return {...asset, ...(refreshed || {}), url: usableUrl, stored: !!asset.path, unavailable: !usableUrl};
+    });
+    const unresolved = ordered.filter(asset => !asset.url);
     if (unresolved.length && !allowPartial) {
-      const names = unresolved.map(asset => asset.name || asset.nodeId).join(", ");
-      throw new Error("Could not retrieve " + unresolved.length + " asset(s): " + names + ". Stored assets were reused where possible; only missing assets require a valid Figma token.");
+      throw new Error(unresolved.length + " saved asset(s) are unavailable. No Figma API request was made. Re-import only if you explicitly want to recover missing assets.");
     }
-    const ordered = assets.map(asset=>resolved.has(asset.nodeId)
-      ? ({...asset,...resolved.get(asset.nodeId),stored:true})
-      : ({...asset,url:null,stored:false,unavailable:true}));
-    setDesign(current=>current?({...current,assets:ordered}):current);
+    setDesign(current => current ? ({...current, assets:ordered}) : current);
     return ordered;
   }
 
@@ -366,7 +350,7 @@ export default function FigmaImporter({ session, onSignOut }) {
     if (!design?.document) { setError("Import a Figma design before exporting React."); return; }
     setLoading(true); setError("");
     try {
-      const assets = await getFreshExportAssets();
+      const assets = await getFreshExportAssets(false);
       const assetPaths = new Map();
       assets.forEach((asset,index) => {
         const filename = (index+1) + "-" + safeFileName(asset.name, "asset" + (asset.format === "svg" ? ".svg" : ".png"));
@@ -752,7 +736,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       ];
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
-      const exportAssets = await getFreshExportAssets(true, false);
+      const exportAssets = await getFreshExportAssets(true);
       // ZIP export reuses cached screenshots only; it never calls Figma to render them.
       const frameScreenshots = (design.frameScreenshots || []).filter(item => item.path && item.url);
       const frameScreenshotWarning = (design.frameScreenshots || []).length && !frameScreenshots.length
