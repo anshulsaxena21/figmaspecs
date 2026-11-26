@@ -823,7 +823,8 @@ export default function FigmaImporter({ session, onSignOut }) {
           const response = await fetch(frame.url);
           if (!response.ok) throw new Error("HTTP " + response.status);
           const bytes = new Uint8Array(await response.arrayBuffer());
-          files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
+          const frameSafeName = safeFileName(frame.name || frame.frameName, "frame-" + (i+1) + ".png");
+          files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+frameSafeName,data:bytes});
         } catch (downloadError) {
           skippedFiles.push({name:frame.frameName || frame.name || "Unnamed frame screenshot",reason:downloadError.message || "Download failed"});
         }
