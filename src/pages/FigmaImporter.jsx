@@ -172,6 +172,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [showAiHandoff, setShowAiHandoff] = useState(false);
   const [showMoreExports, setShowMoreExports] = useState(false);
   const [frameScreenshotRetryBlocked, setFrameScreenshotRetryBlocked] = useState(false);
+  const [figmaRateLimitBlocked, setFigmaRateLimitBlocked] = useState(false);
   useEffect(() => {
     let alive = true;
     PROJECT_DB_NAME = "figmaspecs-" + session.user.id;
@@ -264,7 +265,7 @@ export default function FigmaImporter({ session, onSignOut }) {
   }
   function exportJson() { downloadText("figma-design.json", JSON.stringify(design, null, 2), "application/json"); }
   function exportTokens() { downloadText("figma-tokens.css", cssTokens(allNodes), "text/css"); }
-  async function getFreshExportAssets() {
+  async function getFreshExportAssets(allowPartial = false) {
     const assets = design?.assets || [];
     if (!assets.length) return [];
     const resolved = new Map();
@@ -284,25 +285,32 @@ export default function FigmaImporter({ session, onSignOut }) {
 
     // Only assets that are not present in Storage are regenerated from Figma.
     const missing = assets.filter(asset => !resolved.has(asset.nodeId));
-    if (missing.length) {
+    if (missing.length && !figmaRateLimitBlocked) {
       const fileKey = design?.fileKey || (figmaUrl ? parseFigmaUrl(figmaUrl).fileKey : null);
       if (!fileKey) throw new Error("Some assets are not stored in Supabase and this saved project has no Figma file key. Re-import the original Figma URL to recover only those missing assets.");
-      const result = await callFigmaFunction({
-        action: "export_assets",
-        fileKey,
-        assets: missing.map(({nodeId,name,format})=>({nodeId,name,format}))
-      });
-      for (const asset of result.assets || []) {
-        if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
+      try {
+        const result = await callFigmaFunction({
+          action: "export_assets",
+          fileKey,
+          assets: missing.map(({nodeId,name,format})=>({nodeId,name,format}))
+        });
+        for (const asset of result.assets || []) {
+          if (asset.url && !asset.error) resolved.set(asset.nodeId, asset);
+        }
+      } catch (assetError) {
+        if (/rate limit|429|retry-after/i.test(assetError.message || "")) setFigmaRateLimitBlocked(true);
+        if (!allowPartial) throw assetError;
       }
     }
 
     const unresolved = assets.filter(asset => !resolved.has(asset.nodeId));
-    if (unresolved.length) {
+    if (unresolved.length && !allowPartial) {
       const names = unresolved.map(asset => asset.name || asset.nodeId).join(", ");
       throw new Error("Could not retrieve " + unresolved.length + " asset(s): " + names + ". Stored assets were reused where possible; only missing assets require a valid Figma token.");
     }
-    const ordered = assets.map(asset=>({...asset,...resolved.get(asset.nodeId),stored:true}));
+    const ordered = assets.map(asset=>resolved.has(asset.nodeId)
+      ? ({...asset,...resolved.get(asset.nodeId),stored:true})
+      : ({...asset,url:null,stored:false,unavailable:true}));
     setDesign(current=>current?({...current,assets:ordered}):current);
     return ordered;
   }
@@ -791,7 +799,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       ];
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
-      const exportAssets = await getFreshExportAssets();
+      const exportAssets = await getFreshExportAssets(true);
       let frameScreenshots = [];
       let frameScreenshotWarning = "";
       if (!frameScreenshotRetryBlocked) {
@@ -826,10 +834,10 @@ export default function FigmaImporter({ session, onSignOut }) {
         const bytes = new Uint8Array(await response.arrayBuffer());
         files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
       }
-      let downloadedAssets = 0;
+      let downloadedAssets = 0;\n      const unavailableAssets = exportAssets.filter(asset => asset.unavailable);
       for(let i=0;i<exportAssets.length;i++){
         const asset=exportAssets[i];
-        if(!asset.url) { if(asset.stored) throw new Error("Missing image/vector URL for " + asset.name); continue; }
+        if(!asset.url) continue;
         const response=await fetch(asset.url);
         if(!response.ok) throw new Error("Could not download asset " + asset.name + " (HTTP " + response.status + ").");
         const bytes=new Uint8Array(await response.arrayBuffer());
@@ -838,7 +846,7 @@ export default function FigmaImporter({ session, onSignOut }) {
         downloadedAssets++;
         setGithubProgress({active:uploadToGithub,stage:"Preparing image and vector assets",current:downloadedAssets,total:exportAssets.length,percent:Math.round(3+(downloadedAssets/Math.max(exportAssets.length,1))*4),fileName:safeName});
       }
-      if(exportAssets.length && downloadedAssets===0) throw new Error("No image or vector assets could be downloaded. Re-import the Figma file and try again.");
+      if(exportAssets.length && downloadedAssets===0 && !unavailableAssets.length) throw new Error("No image or vector assets could be downloaded. Check the asset storage and try again.");
       const safe=(design.name||"figma-project").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"figma-project";
       const bundle = zipBlob(files);
       if (uploadToGithub) await uploadZipToGithub(bundle);
