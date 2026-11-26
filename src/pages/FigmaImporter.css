@@ -521,3 +521,77 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .figma-studio.theme-dark .node-type-frame{
   color:var(--accent)!important;
 }
+
+
+/* Accent audit: remove remaining fixed orange hover fills and AI handoff icon colors */
+.figma-studio .saved-project-row>button:last-child:hover{
+  color:var(--accent)!important;
+  background:var(--accent-soft)!important;
+}
+.figma-studio .github-connect-topbar:hover,
+.figma-studio .secondary-button:hover,
+.figma-studio .asset-card:hover,
+.figma-studio .more-exports-menu button:hover,
+.figma-studio .token-connected button:hover,
+.figma-studio .saved-project-row:hover{
+  color:var(--accent)!important;
+  border-color:color-mix(in srgb,var(--accent) 32%,#e8eaf0)!important;
+  background:var(--accent-soft)!important;
+  box-shadow:0 3px 12px color-mix(in srgb,var(--accent) 10%,transparent)!important;
+}
+.figma-studio .ai-handoff-panel .eyebrow,
+.figma-studio .ai-handoff-panel .ai-handoff-steps article b svg,
+.figma-studio .ai-handoff-panel .ai-handoff-heading svg,
+.figma-studio .ai-handoff-panel .ai-handoff-actions svg{
+  color:var(--accent)!important;
+}
+.figma-studio .ai-handoff-panel .ai-handoff-steps article{
+  transition:border-color .18s ease,background .18s ease,box-shadow .18s ease;
+}
+.figma-studio .ai-handoff-panel .ai-handoff-steps article:hover{
+  border-color:color-mix(in srgb,var(--accent) 28%,#eceef2)!important;
+  background:var(--accent-soft)!important;
+  box-shadow:0 4px 14px color-mix(in srgb,var(--accent) 9%,transparent)!important;
+}
+.figma-studio .ai-handoff-panel .ai-handoff-actions .secondary-button:hover{
+  color:var(--accent)!important;
+  border-color:color-mix(in srgb,var(--accent) 38%,#e5e7eb)!important;
+  background:var(--accent-soft)!important;
+}
+.figma-studio .ai-handoff-panel .ai-handoff-actions .primary-small{
+  color:#fff!important;
+  background:var(--accent)!important;
+  border-color:var(--accent)!important;
+}
+.figma-studio .ai-handoff-panel .ai-handoff-actions .primary-small:hover{
+  background:var(--accent-hover)!important;
+  border-color:var(--accent-hover)!important;
+}
+.figma-studio .token-help-toggle:hover,
+.figma-studio .token-help-panel a:hover,
+.figma-studio .group-title-action button:hover,
+.figma-studio .import-foot button:hover{
+  color:var(--accent-hover)!important;
+  background:var(--accent-soft)!important;
+}
+.figma-studio .layer-row:hover:not(.selected){
+  background:var(--accent-soft)!important;
+}
+.figma-studio .theme-presets button:focus-visible{
+  outline:3px solid var(--accent)!important;
+  outline-offset:3px;
+}
+.figma-studio.theme-dark .ai-handoff-panel,
+.figma-studio.theme-dark .ai-handoff-steps article{
+  background:#22252d!important;
+  border-color:#363a45!important;
+}
+.figma-studio.theme-dark .ai-handoff-heading h3,
+.figma-studio.theme-dark .ai-handoff-steps article b{
+  color:#f3f4f7!important;
+}
+.figma-studio.theme-dark .ai-handoff-heading p,
+.figma-studio.theme-dark .ai-handoff-steps article p,
+.figma-studio.theme-dark .ai-handoff-note{
+  color:#a4aab6!important;
+}
