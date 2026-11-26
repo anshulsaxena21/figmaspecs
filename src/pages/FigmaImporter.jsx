@@ -975,7 +975,8 @@ export default function FigmaImporter({ session, onSignOut }) {
           <p className="ai-handoff-note">The project ZIP and GitHub push include both AI handoff documents automatically.</p>
         </section>}
         <section className="new-tools-grid">
-          <button className="new-tool-card" onClick={()=>setQualityAuditOpen(v=>!v)}><span className="new-tool-icon"><ShieldCheck size={19}/></span><span><b>Design Quality Audit</b><small>Check typography, layout, naming and structure.</small></span><ChevronDown size={16}/></button>\n          <button className="new-tool-card" onClick={()=>setComparisonOpen(v=>!v)}><span className="new-tool-icon"><Ruler size={19}/></span><span><b>Design vs Code Comparison</b><small>Overlay design and implementation screenshots.</small></span><ChevronDown size={16}/></button>
+          <button className="new-tool-card" onClick={()=>setQualityAuditOpen(v=>!v)}><span className="new-tool-icon"><ShieldCheck size={19}/></span><span><b>Design Quality Audit</b><small>Check typography, layout, naming and structure.</small></span><ChevronDown size={16}/></button>
+          <button className="new-tool-card" onClick={()=>setComparisonOpen(v=>!v)}><span className="new-tool-icon"><Ruler size={19}/></span><span><b>Design vs Code Comparison</b><small>Overlay design and implementation screenshots.</small></span><ChevronDown size={16}/></button>
           <button className="new-tool-card" onClick={()=>{setPromptBuilderOpen(v=>!v);setGeneratedPrompt("");}}><span className="new-tool-icon"><Sparkles size={19}/></span><span><b>AI Prompt Builder</b><small>Generate a project-aware implementation brief.</small></span><ChevronDown size={16}/></button>
         </section>
         {qualityAuditOpen && <section className="tool-panel quality-audit-panel">
