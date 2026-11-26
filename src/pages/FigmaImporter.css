@@ -342,3 +342,47 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   .saved-project-list{grid-template-columns:minmax(0,1fr)}
   .saved-project-row{grid-template-columns:minmax(0,1fr) 28px}
 }
+
+/* User-controlled workspace theme */
+.figma-studio{--accent:var(--user-accent,#ff6600);--accent-soft:var(--user-accent-soft,#fff0e8)}
+.figma-studio .brand-mark,.figma-studio .import-icon,.figma-studio .stat-icon{color:var(--accent);background:var(--accent-soft)}
+.figma-studio .eyebrow,.figma-studio .import-foot button,.figma-studio .token-help-toggle{color:var(--accent)}
+.figma-studio .import-button,.figma-studio .primary-small,.figma-studio .theme-save-button{background:var(--accent);border-color:var(--accent)}
+.figma-studio .import-button:hover,.figma-studio .primary-small:hover{filter:brightness(.94)}
+.figma-studio .layer-row.selected{background:var(--accent-soft)}
+.figma-studio .saved-project-row:hover{border-color:var(--accent);background:var(--accent-soft)}
+.theme-trigger{color:var(--accent)}
+.theme-customizer{position:fixed;right:clamp(14px,4vw,58px);top:82px;z-index:40;width:min(360px,calc(100vw - 28px));padding:18px;background:#fff;border:1px solid #e8eaf0;border-radius:15px;box-shadow:0 18px 55px rgba(20,30,45,.16);color:#252936}
+.theme-customizer-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:17px}
+.theme-customizer-head b{display:block;font-size:16px}
+.theme-customizer-head small,.theme-save-note{display:block;color:#7b8290;font-size:14px;margin-top:4px}
+.theme-mode-row{display:flex;align-items:center;justify-content:space-between;margin:14px 0;font-size:14px}
+.theme-mode-options{display:flex;padding:3px;border:1px solid #e8eaf0;border-radius:9px;background:#f7f8fa}
+.theme-mode-options button{border:0;background:transparent;border-radius:7px;padding:7px 12px;font-size:14px;color:#68707d;cursor:pointer}
+.theme-mode-options button.active{background:#fff;color:#252936;box-shadow:0 1px 4px #00000012}
+.theme-color-label{display:block;font-size:14px;font-weight:600;margin:16px 0 8px}
+.theme-color-controls{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:8px}
+.theme-color-controls input[type=color]{width:44px;height:42px;padding:4px;border:1px solid #e5e8ee;border-radius:8px;background:#fff;cursor:pointer}
+.theme-color-controls input[type=text]{width:100%;min-width:0;height:42px;border:1px solid #e5e8ee;border-radius:8px;padding:0 11px;font:14px "DM Sans",sans-serif;text-transform:uppercase}
+.theme-save-button{border:0;border-radius:8px;padding:0 15px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.theme-save-button:disabled{opacity:.4;cursor:not-allowed}
+.theme-presets{display:flex;align-items:center;gap:9px;margin-top:15px}
+.theme-presets span{font-size:14px;color:#747c89;margin-right:auto}
+.theme-presets button{width:22px;height:22px;border:2px solid #fff;outline:1px solid #dfe3e9;border-radius:50%;cursor:pointer}
+.theme-customizer-foot{display:flex;justify-content:space-between;align-items:center;margin-top:17px;padding-top:13px;border-top:1px solid #edf0f3}
+.theme-customizer-foot button{border:0;background:none;padding:0;color:#68717e;font-size:14px;text-decoration:underline;cursor:pointer}
+.theme-customizer-foot span{display:flex;align-items:center;gap:5px;color:#16865a;font-size:14px}
+.theme-save-note{margin-top:10px;line-height:1.45}
+.figma-studio.theme-dark{background:#17191f;color:#eef0f4}
+.theme-dark .studio-topbar,.theme-dark .import-panel,.theme-dark .saved-projects,.theme-dark .panel,.theme-dark .stat-card,.theme-dark .theme-customizer,.theme-dark .intro-chip,.theme-dark .saved-project-row,.theme-dark .secondary-button,.theme-dark .empty-capabilities span{background:#22252d;color:#eef0f4;border-color:#363a45}
+.theme-dark .studio-brand,.theme-dark .project-heading h2,.theme-dark .saved-projects-head b,.theme-dark .panel-heading b,.theme-dark .stat-card b,.theme-dark .saved-project-row b,.theme-dark .theme-customizer-head b{color:#f3f4f7}
+.theme-dark .intro-row p,.theme-dark .saved-projects-head small,.theme-dark .saved-project-row small,.theme-dark .project-heading small,.theme-dark .stat-card small,.theme-dark .empty-state p,.theme-dark .account-email{color:#a4aab6}
+.theme-dark .url-field,.theme-dark .token-field,.theme-dark .layer-search,.theme-dark .theme-mode-options,.theme-dark .theme-color-controls input[type=text]{background:#191c23;color:#f0f2f6;border-color:#3a3f4b}
+.theme-dark .layer-row:hover{background:#2b303a}
+.theme-dark .layer-row.selected{background:var(--accent-soft);color:#fff}
+.theme-dark .detail-tabs,.theme-dark .property-group,.theme-dark .project-heading,.theme-dark .studio-footer{border-color:#363a45}
+.theme-dark .theme-mode-options button.active{background:#383d49;color:#fff}
+.theme-dark .theme-color-controls input[type=color]{background:#22252d;border-color:#3a3f4b}
+.theme-dark .empty-capabilities span{border-color:#363a45}
+.theme-dark .workspace-note{background:#2b2522;border-color:#594033;color:#e2c5b4}
+@media(max-width:520px){.theme-customizer{top:72px;right:14px}}
