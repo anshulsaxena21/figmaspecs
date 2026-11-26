@@ -202,3 +202,75 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
  .property-grid{grid-template-columns:1fr;gap:0}
  .studio-footer{align-items:flex-start;flex-direction:column;gap:7px}
 }
+
+
+/* Saved project cards: prevent long Figma file names from colliding with actions */
+.saved-project-list{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));
+  gap:12px;
+  min-width:0;
+}
+.saved-project-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 28px;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+  overflow:hidden;
+}
+.saved-project-row>button:first-child{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  text-align:left;
+}
+.saved-project-row>button:first-child>svg{
+  flex:0 0 18px;
+}
+.saved-project-row>button:first-child>span{
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+}
+.saved-project-row>button:first-child>span>b{
+  display:block;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.saved-project-row>button:first-child>span>small{
+  display:block;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.saved-project-row>button:last-child{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:28px;
+  height:28px;
+  min-width:28px;
+  border-radius:7px;
+  color:#929aa6;
+}
+.saved-project-row>button:last-child:hover{
+  color:#d94f22;
+  background:#fff0e9;
+}
+@media(max-width:640px){
+  .saved-project-list{grid-template-columns:minmax(0,1fr)}
+  .saved-project-row{grid-template-columns:minmax(0,1fr) 28px}
+}
