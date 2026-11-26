@@ -57,3 +57,148 @@
 .more-exports-menu button:hover{background:#fff3ec;color:#d95708;}
 .more-exports-menu button:disabled{opacity:.5;cursor:not-allowed;}
 @media(max-width:600px){.more-exports-wrap{flex:1;}.more-exports-wrap>.secondary-button{width:100%;}}
+
+
+/* FigmaSpecs visual refresh — calmer hierarchy, clearer surfaces, better rhythm */
+.figma-studio{min-height:100vh;background:#f7f8fa;color:#20242c}
+.studio-topbar{height:72px;padding:0 clamp(20px,4vw,64px);background:rgba(255,255,255,.94);border-bottom:1px solid #eceef2;box-shadow:0 2px 12px rgba(25,35,50,.025);backdrop-filter:blur(14px)}
+.studio-brand{gap:10px;font-size:18px;letter-spacing:-.45px}
+.brand-mark{width:34px;height:34px;border-radius:11px;background:#fff1e8;color:#f36b25}
+.topbar-center{font-size:14px;color:#707784;gap:10px}
+.free-label{font-size:14px;letter-spacing:.04em;color:#818895}
+.account-actions{gap:9px}
+.account-email{color:#737b88}
+.github-connect-topbar,.signout-button,.icon-button{min-height:40px;border-radius:10px}
+.studio-content{width:min(1440px,100%);padding:46px clamp(20px,4vw,64px) 24px;margin:0 auto}
+.intro-row{align-items:center;margin:0 0 26px;gap:24px}
+.intro-row h1{font-size:clamp(28px,3vw,38px);line-height:1.16;letter-spacing:-1.2px;font-weight:700;margin:10px 0}
+.intro-row p{max-width:620px;color:#737b88;font-size:15px;line-height:1.65}
+.eyebrow{font-size:14px;letter-spacing:.075em;color:#e96825;font-weight:700}
+.intro-chip{padding:10px 14px;border:1px solid #e9ebef;border-radius:999px;background:#fff;color:#69717e;font-size:14px;box-shadow:0 2px 8px rgba(25,35,50,.025)}
+.import-panel{padding:24px;border:1px solid #e7eaf0;border-radius:17px;background:#fff;box-shadow:0 8px 30px rgba(25,35,50,.045)}
+.import-heading{gap:13px;margin-bottom:19px}
+.import-icon{width:42px;height:42px;border-radius:12px;background:#fff2ea;color:#f36b25}
+.import-heading strong{font-size:17px;letter-spacing:-.2px}
+.import-heading small{font-size:14px;line-height:1.55;color:#858c98;margin-top:4px}
+.import-fields{grid-template-columns:minmax(0,1fr) minmax(220px,.55fr) auto;gap:10px}
+.url-field,.token-connected{height:48px;border-radius:10px}
+.url-field{border-color:#e4e7ed;background:#fff;padding:0 14px}
+.url-field:focus-within{border-color:#ff9b68;box-shadow:0 0 0 3px #fff1e9}
+.url-field input{font-size:14px}
+.token-connected{background:#f9fafb;border-color:#eceef2;padding:0 12px}
+.import-button{height:48px;border-radius:10px;padding:0 19px;background:#ff6600;box-shadow:0 5px 12px rgba(255,102,0,.16);font-size:14px}
+.import-button:hover{background:#ed5e00;transform:translateY(-1px)}
+.import-foot{margin-top:15px;color:#89909b;font-size:14px;gap:18px}
+.import-foot button{color:#e96825;font-size:14px}
+.settings-panel{margin-top:17px!important;border-radius:12px!important;background:#fafbfc!important}
+.saved-projects{margin:20px 0 0;padding:20px;border-radius:15px;border-color:#e8ebf0;box-shadow:0 4px 18px rgba(25,35,50,.025)}
+.saved-projects-head{margin-bottom:15px}
+.saved-projects-head b{font-size:15px}
+.saved-project-list{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.saved-project-row{min-height:72px;padding:12px;border-radius:11px;border-color:#edf0f4;transition:border-color .18s,background .18s,transform .18s}
+.saved-project-row:hover{border-color:#ffd0b8;background:#fffaf7;transform:translateY(-1px)}
+.saved-project-row>button:first-child{gap:12px}
+.saved-project-row>button:first-child svg{width:18px;height:18px}
+.saved-project-row b{font-size:14px}
+.empty-state{margin:26px auto 8px;max-width:560px;padding:30px 20px 22px}
+.empty-state h2{font-size:19px;letter-spacing:-.35px}
+.empty-state p{max-width:480px;font-size:14px;line-height:1.65;color:#7d8591}
+.empty-capabilities{gap:9px}
+.empty-capabilities span{padding:9px 12px;border:1px solid #eceef2;border-radius:9px;background:#fff;font-size:14px}
+.workspace{margin-top:28px}
+.project-heading{padding:0 0 17px;margin-bottom:17px;border-bottom:1px solid #e9ecf1}
+.project-heading h2{font-size:21px;letter-spacing:-.45px}
+.project-heading small{font-size:14px;line-height:1.5}
+.export-actions{gap:8px;align-items:center}
+.secondary-button,.primary-small{height:40px;border-radius:9px;padding:0 13px;font-size:14px;transition:transform .16s,border-color .16s,background .16s}
+.secondary-button{border-color:#e4e7ec;color:#59616e;background:#fff}
+.secondary-button:hover{border-color:#ffb28d;background:#fffaf7;color:#d95c12}
+.primary-small{background:#ff6600;border-radius:9px;box-shadow:0 3px 9px rgba(255,102,0,.12)}
+.primary-small:hover{background:#ed5e00;transform:translateY(-1px)}
+.stat-grid{gap:12px;margin-bottom:16px}
+.stat-card{min-height:78px;padding:15px 17px;border-radius:13px;border-color:#e8ebf0;box-shadow:0 3px 12px rgba(25,35,50,.025)}
+.stat-icon{width:38px;height:38px;border-radius:10px;background:#fff2ea}
+.stat-card b{font-size:18px}
+.stat-card small{font-size:14px;margin-top:3px}
+.inspector-layout{gap:15px;grid-template-columns:minmax(280px,.82fr) minmax(0,1.6fr)}
+.panel{border-radius:13px;border-color:#e7eaf0;box-shadow:0 3px 14px rgba(25,35,50,.025)}
+.layers-panel,.details-panel{min-height:550px}
+.panel-heading,.detail-tabs{height:54px;padding-left:17px;padding-right:17px}
+.panel-heading b{font-size:14px}
+.layer-search{height:41px;margin:12px;border-radius:9px;background:#fafbfc}
+.layer-row{height:36px;border-radius:7px;gap:8px}
+.layer-row:hover{background:#f7f8fa}
+.layer-row.selected{background:#fff1e9}
+.layer-name,.layer-type{font-size:14px}
+.layer-list{padding:0 8px 12px}
+.detail-tabs{gap:22px}
+.detail-tabs button{font-size:14px}
+.property-content{padding:0 19px 18px}
+.selected-layer{padding:17px 0 14px}
+.property-group{padding:15px 0}
+.property-group h4{font-size:14px;margin-bottom:12px}
+.property-row{min-height:31px}
+.property-row span,.property-row b,.paint-row,.muted-line{font-size:14px}
+.property-grid{gap:2px 24px}
+.assets-grid{padding:18px;gap:12px}
+.asset-card{border-radius:10px;padding:11px}
+.asset-preview{height:88px;border-radius:7px}
+.workspace-note{margin-top:15px;padding:13px 15px;border-radius:10px;background:#fffaf6;border-color:#ffeadc;color:#806d60}
+.studio-footer{padding-top:24px;margin-top:30px;border-top:1px solid #e9ecf1;color:#9299a4;font-size:14px}
+.github-modal{border-radius:16px}
+.github-progress-card{border-radius:13px}
+.ai-handoff-panel{border-radius:15px}
+.more-exports-menu{border-radius:11px;padding:7px;box-shadow:0 14px 38px rgba(25,35,50,.12)}
+.more-exports-menu button{min-height:42px;border-radius:8px}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid rgba(255,102,0,.2);outline-offset:2px}
+@media(max-width:1050px){
+ .import-fields{grid-template-columns:minmax(0,1fr) minmax(210px,.7fr)}
+ .import-button{grid-column:1/-1}
+ .project-heading{align-items:flex-start}
+ .export-actions{flex-wrap:wrap}
+}
+@media(max-width:760px){
+ .studio-topbar{height:auto;min-height:64px;padding:10px 18px;gap:10px}
+ .account-actions{gap:6px}
+ .studio-content{padding:30px 18px 20px}
+ .intro-row{align-items:flex-start}
+ .intro-chip{white-space:normal}
+ .import-panel{padding:19px}
+ .import-fields{grid-template-columns:1fr}
+ .import-button{grid-column:auto}
+ .project-heading{gap:14px}
+ .export-actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .export-actions>*{min-width:0}
+ .export-actions button{justify-content:center}
+ .more-exports-wrap{min-width:0}
+ .more-exports-wrap>.secondary-button{width:100%}
+ .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .inspector-layout{grid-template-columns:minmax(0,1fr)}
+ .layers-panel,.details-panel{min-height:0}
+ .layer-list{max-height:380px}
+ .property-content{max-height:620px}
+}
+@media(max-width:520px){
+ .studio-topbar{flex-wrap:wrap}
+ .studio-brand{margin-right:auto}
+ .account-email{display:none}
+ .github-connect-topbar{font-size:14px}
+ .studio-content{padding:25px 14px 18px}
+ .intro-row h1{font-size:29px}
+ .import-panel{padding:16px}
+ .import-foot{align-items:flex-start;flex-direction:column;gap:9px}
+ .import-foot button{width:auto}
+ .saved-projects{padding:15px}
+ .saved-project-list{grid-template-columns:1fr}
+ .project-heading h2{font-size:19px;overflow-wrap:anywhere}
+ .export-actions{grid-template-columns:1fr 1fr;gap:7px}
+ .secondary-button,.primary-small{min-width:0;padding:0 8px;font-size:14px}
+ .stat-grid{gap:8px}
+ .stat-card{padding:12px;gap:9px}
+ .stat-card b{font-size:16px}
+ .stat-icon{width:34px;height:34px}
+ .detail-tabs{gap:17px}
+ .property-content{padding:0 14px 15px}
+ .property-grid{grid-template-columns:1fr;gap:0}
+ .studio-footer{align-items:flex-start;flex-direction:column;gap:7px}
+}
