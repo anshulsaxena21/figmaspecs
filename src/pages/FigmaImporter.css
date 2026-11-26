@@ -386,3 +386,58 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .theme-dark .empty-capabilities span{border-color:#363a45}
 .theme-dark .workspace-note{background:#2b2522;border-color:#594033;color:#e2c5b4}
 @media(max-width:520px){.theme-customizer{top:72px;right:14px}}
+
+
+/* Complete accent-color coverage: remove every hard-coded orange accent from interactive UI */
+.figma-studio{
+  --accent:var(--user-accent,#ff6600);
+  --accent-soft:var(--user-accent-soft,#fff0e8);
+  --accent-border:color-mix(in srgb,var(--accent) 30%,white);
+  --accent-hover:color-mix(in srgb,var(--accent) 88%,black);
+}
+.figma-studio .brand-mark,
+.figma-studio .import-icon,
+.figma-studio .stat-icon,
+.figma-studio .github-progress-spinner,
+.figma-studio .token-connected button,
+.figma-studio .empty-icon,
+.figma-studio .empty-illustration .card-front,
+.figma-studio .empty-spark{color:var(--accent)!important;background:var(--accent-soft)!important}
+.figma-studio .eyebrow,
+.figma-studio .import-foot button,
+.figma-studio .token-help-toggle,
+.figma-studio .token-doc-link,
+.figma-studio .saved-project-row>button:first-child svg,
+.figma-studio .theme-trigger{color:var(--accent)!important}
+.figma-studio .import-button,
+.figma-studio .primary-small,
+.figma-studio .save-token-button,
+.figma-studio .theme-save-button,
+.figma-studio .github-upload-button,
+.figma-studio .github-progress-bar>span{background:var(--accent)!important;border-color:var(--accent)!important}
+.figma-studio .import-button:hover,
+.figma-studio .primary-small:hover,
+.figma-studio .save-token-button:hover,
+.figma-studio .theme-save-button:hover{background:var(--accent-hover)!important;border-color:var(--accent-hover)!important}
+.figma-studio .url-field:focus-within,
+.figma-studio input:focus,
+.figma-studio select:focus,
+.figma-studio .github-repository-select:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent-soft)!important}
+.figma-studio .layer-row.selected,
+.figma-studio .saved-project-row:hover,
+.figma-studio .more-exports-menu button:hover,
+.figma-studio .token-connected button:hover{background:var(--accent-soft)!important}
+.figma-studio .saved-project-row:hover,
+.figma-studio .secondary-button:hover{border-color:var(--accent-border)!important}
+.figma-studio .secondary-button:hover,
+.figma-studio .more-exports-menu button:hover{color:var(--accent)!important}
+.figma-studio button:focus-visible,
+.figma-studio a:focus-visible,
+.figma-studio input:focus-visible,
+.figma-studio select:focus-visible{outline-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent-soft)!important}
+.figma-studio .workspace-note{border-color:var(--accent-border)!important}
+.figma-studio .token-help-panel{border-color:var(--accent-border)!important;background:var(--accent-soft)!important}
+.figma-studio .github-progress-spinner{color:var(--accent)!important}
+.figma-studio .github-progress-bar{background:var(--accent-soft)!important}
+.figma-studio .github-progress-bar>span{background:var(--accent)!important}
+.figma-studio .more-exports-menu button:hover{background:var(--accent-soft)!important}
