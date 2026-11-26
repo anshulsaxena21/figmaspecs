@@ -255,7 +255,8 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [promptStyling, setPromptStyling] = useState("Use the existing styling approach");
   const [promptViewport, setPromptViewport] = useState("Desktop, tablet and mobile");
   const [promptExtra, setPromptExtra] = useState("");
-  const [generatedPrompt, setGeneratedPrompt] = useState("");\n  const [qualityAuditOpen, setQualityAuditOpen] = useState(false);
+  const [generatedPrompt, setGeneratedPrompt] = useState("");
+  const [qualityAuditOpen, setQualityAuditOpen] = useState(false);
 
   const [figmaRateLimitBlocked, setFigmaRateLimitBlocked] = useState(false);
   useEffect(() => {
