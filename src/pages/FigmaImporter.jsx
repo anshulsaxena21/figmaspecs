@@ -339,8 +339,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       for (const item of result.assets || []) if (item.url && !item.error) resolved.set(item.nodeId, item);
     }
     const failed = unique.filter(node => !resolved.has(node.id));
-    if (failed.length) throw new Error("Could not save " + failed.length + " frame screenshot(s): " + failed.map(node => node.name || node.id).join(", "));
-    const screenshots = unique.map(node => ({
+    const screenshots = unique.filter(node => resolved.has(node.id)).map(node => ({
       ...resolved.get(node.id),
       nodeId: node.id,
       name: resolved.get(node.id).name,
@@ -349,8 +348,9 @@ export default function FigmaImporter({ session, onSignOut }) {
       height: node.absoluteBoundingBox?.height || node.size?.y || null,
       stored: true
     }));
+    // Keep successful screenshots even when one frame cannot be rendered.
     setDesign(current => current ? ({...current, frameScreenshots: screenshots}) : current);
-    return screenshots;
+    return Object.assign(screenshots, { failedFrames: failed.map(node => node.name || node.id) });
   }
 
   async function exportReact() {
@@ -797,6 +797,10 @@ export default function FigmaImporter({ session, onSignOut }) {
       if (!frameScreenshotRetryBlocked) {
         try {
           frameScreenshots = await getFrameScreenshots();
+          if (frameScreenshots.failedFrames?.length) {
+            frameScreenshotWarning = "Skipped " + frameScreenshots.failedFrames.length + " frame screenshot(s): " + frameScreenshots.failedFrames.join(", ") + ". The rest of the project export will continue.";
+            setFrameScreenshotRetryBlocked(true);
+          }
         } catch (screenshotError) {
           frameScreenshotWarning = "Frame screenshots were skipped: " + (screenshotError.message || "Figma could not render one or more frames.") + " The rest of the project export will continue.";
           if (/rate limit|429|retry-after/i.test(screenshotError.message || "")) setFrameScreenshotRetryBlocked(true);
