@@ -852,6 +852,8 @@ export default function FigmaImporter({ session, onSignOut }) {
       const bundle = zipBlob(files);
       if (uploadToGithub) await uploadZipToGithub(bundle);
       else saveBlob(safe+"-bundle.zip",bundle);
+      const missingAssetWarning = unavailableAssets.length ? unavailableAssets.length + " image/vector asset(s) could not be recovered because Figma rate-limited the request; their metadata remains in the manifest." : "";
+      if (frameScreenshotWarning || missingAssetWarning) setError([frameScreenshotWarning,missingAssetWarning].filter(Boolean).join(" "));
     }catch(err){if(uploadToGithub){setGithubProgress({active:false,stage:"Upload failed",current:0,total:0,percent:0,fileName:""});setGithubToast({type:"error",title:"GitHub upload failed",message:err.message||"Unknown upload error"});setError(err.message||"GitHub upload failed.");}else setError("ZIP export failed: "+(err.message||"Unknown error"));}
     finally{setLoading(false);}
   }
