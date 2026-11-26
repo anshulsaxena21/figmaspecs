@@ -136,6 +136,33 @@ function zipBlob(files){
 function saveBlob(name,blob){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 
 export default function FigmaImporter({ session, onSignOut }) {
+  const [themePanelOpen, setThemePanelOpen] = useState(false);
+  const [accentDraft, setAccentDraft] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("figmaspecs-theme-" + session.user.id))?.accent || "#ff6600"; } catch { return "#ff6600"; }
+  });
+  const [themeMode, setThemeMode] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("figmaspecs-theme-" + session.user.id))?.mode || "light"; } catch { return "light"; }
+  });
+  const [accentColor, setAccentColor] = useState(accentDraft);
+  const [savedThemeNotice, setSavedThemeNotice] = useState(false);
+  const isValidHex = value => /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.trim());
+  const normalizeHex = value => {
+    const hex = value.trim();
+    if (!isValidHex(hex)) return null;
+    return hex.length === 4 ? "#" + [...hex.slice(1)].map(char => char + char).join("") : hex;
+  };
+  const applyTheme = () => {
+    const normalized = normalizeHex(accentDraft);
+    if (!normalized) return;
+    setAccentColor(normalized);
+    try { localStorage.setItem("figmaspecs-theme-" + session.user.id, JSON.stringify({ accent: normalized, mode: themeMode })); } catch {}
+    setSavedThemeNotice(true);
+    window.setTimeout(() => setSavedThemeNotice(false), 2200);
+  };
+  const resetTheme = () => {
+    setAccentDraft("#ff6600"); setAccentColor("#ff6600"); setThemeMode("light");
+    try { localStorage.removeItem("figmaspecs-theme-" + session.user.id); } catch {}
+  };
   const [figmaUrl, setFigmaUrl] = useState("");
   const [token, setToken] = useState("");
   const [showSettings, setShowSettings] = useState(false);
@@ -809,13 +836,21 @@ export default function FigmaImporter({ session, onSignOut }) {
     </React.Fragment>;
   };
 
-  return <main className="figma-studio">
+  return <main className={`figma-studio theme-${themeMode}`} style={{ "--user-accent": accentColor, "--user-accent-soft": accentColor + "18" }}>
     <header className="studio-topbar">
       <a className="studio-brand" href="./"><span className="brand-mark"><Figma size={19}/></span><span>Figma<b>Specs</b></span></a>
       <div className="topbar-center"><span className="live-dot"/> Design extraction workspace <span className="topbar-divider"/> <span className="free-label">FREE-TIER FRIENDLY</span></div>
-      <div className="account-actions"><span className="account-email">{session.user.email}</span><button className="github-connect-topbar" onClick={() => setGithubUploadOpen(true)} title="Connect a GitHub account"><Github size={15}/>{githubConnected ? "GitHub connected" : "Connect GitHub"}</button><button className="icon-button" onClick={() => setShowSettings(v => !v)} title="Figma connection settings"><Settings2 size={18}/></button><button className="signout-button" onClick={onSignOut}>Sign out</button></div>
+      <div className="account-actions"><span className="account-email">{session.user.email}</span><button className="github-connect-topbar" onClick={() => setGithubUploadOpen(true)} title="Connect a GitHub account"><Github size={15}/>{githubConnected ? "GitHub connected" : "Connect GitHub"}</button><button className="icon-button theme-trigger" onClick={() => setThemePanelOpen(v => !v)} title="Customize appearance" aria-label="Customize appearance"><Palette size={18}/></button><button className="icon-button" onClick={() => setShowSettings(v => !v)} title="Figma connection settings"><Settings2 size={18}/></button><button className="signout-button" onClick={onSignOut}>Sign out</button></div>
     </header>
-
+    {themePanelOpen && <section className="theme-customizer" aria-label="Appearance settings">
+      <div className="theme-customizer-head"><div><b>Customize your workspace</b><small>Choose an accent color and appearance</small></div><button className="icon-button" onClick={() => setThemePanelOpen(false)} aria-label="Close appearance settings"><X size={16}/></button></div>
+      <div className="theme-mode-row"><span>Appearance</span><div className="theme-mode-options"><button type="button" className={themeMode === "light" ? "active" : ""} onClick={() => setThemeMode("light")}>Light</button><button type="button" className={themeMode === "dark" ? "active" : ""} onClick={() => setThemeMode("dark")}>Dark</button></div></div>
+      <label className="theme-color-label" htmlFor="theme-accent-hex">Accent color</label>
+      <div className="theme-color-controls"><input aria-label="Choose accent color" type="color" value={normalizeHex(accentDraft) || "#ff6600"} onChange={e => setAccentDraft(e.target.value)}/><input id="theme-accent-hex" type="text" value={accentDraft} onChange={e => setAccentDraft(e.target.value)} placeholder="#FF6600" maxLength={7}/><button type="button" className="theme-save-button" onClick={applyTheme} disabled={!isValidHex(accentDraft)}>Save</button></div>
+      <div className="theme-presets"><span>Quick colors</span>{["#FF6600","#635BFF","#2878E5","#16A085","#D9468F","#7C5CFC"].map(color => <button key={color} type="button" aria-label={"Use "+color} title={color} style={{background:color}} onClick={() => setAccentDraft(color)}/>)}</div>
+      <div className="theme-customizer-foot"><button type="button" onClick={resetTheme}>Reset to default</button>{savedThemeNotice && <span><Check size={13}/> Saved</span>}</div>
+      <small className="theme-save-note">Your preference is saved on this browser for your account.</small>
+    </section>}
     <section className="studio-content">
       <div className="intro-row">
         <div><div className="eyebrow"><Sparkles size={13}/> FIGMA DESIGN INSPECTOR</div><h1>From Figma to <span>pixel-perfect code.</span></h1><p>Read the real design values, inspect every layer and export the assets your website needs.</p></div>
