@@ -323,7 +323,8 @@ export default function FigmaImporter({ session, onSignOut }) {
     text: allNodes.filter(n => n.type === "TEXT").length,
     images: allNodes.filter(n => (n.fills || []).some(f => f.type === "IMAGE")).length,
     vectors: allNodes.filter(n => ["VECTOR","BOOLEAN_OPERATION"].includes(n.type)).length
-  }), [allNodes]);\n  const qualityAudit = useMemo(() => runDesignQualityAudit(allNodes), [allNodes]);
+  }), [allNodes]);
+  const qualityAudit = useMemo(() => runDesignQualityAudit(allNodes), [allNodes]);
 
   async function importDesign(e) {
     e?.preventDefault(); setError(""); setImporting(true); setDesign(null); setSelected(null);
