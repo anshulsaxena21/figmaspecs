@@ -811,7 +811,7 @@ export default function FigmaImporter({ session, onSignOut }) {
           }
         } catch (screenshotError) {
           frameScreenshotWarning = "Frame screenshots were skipped: " + (screenshotError.message || "Figma could not render one or more frames.") + " The rest of the project export will continue.";
-          if (/rate limit|429|retry-after/i.test(screenshotError.message || "")) setFrameScreenshotRetryBlocked(true);
+          if (/rate limit|429|retry-after/i.test(screenshotError.message || "")) { setFrameScreenshotRetryBlocked(true); setFigmaRateLimitBlocked(true); }
         }
       } else {
         frameScreenshotWarning = "Frame screenshots were skipped because Figma previously rate-limited screenshot generation. The rest of the project export will continue.";
