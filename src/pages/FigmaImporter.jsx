@@ -827,24 +827,33 @@ export default function FigmaImporter({ session, onSignOut }) {
       const docsWithAssets=describeLayers(design.document,exportAssets);
       files.find(file=>file.name==="design-data/layer-descriptions.json").data=JSON.stringify(docsWithAssets,null,2);
       files.find(file=>file.name==="design-data/layer-descriptions.csv").data=[keys.join(","),...docsWithAssets.map(row=>keys.map(k=>csvEscape(row[k])).join(","))].join("\n");
+      const skippedFiles = [];
       for (let i=0; i<frameScreenshots.length; i++) {
         const frame = frameScreenshots[i];
-        const response = await fetch(frame.url);
-        if (!response.ok) throw new Error("Could not download frame screenshot " + frame.frameName + " (HTTP " + response.status + ").");
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
+        try {
+          const response = await fetch(frame.url);
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
+        } catch (downloadError) {
+          skippedFiles.push({name:frame.frameName || frame.name || "Unnamed frame screenshot",reason:downloadError.message || "Download failed"});
+        }
       }
       let downloadedAssets = 0;
       const unavailableAssets = exportAssets.filter(asset => asset.unavailable);
       for(let i=0;i<exportAssets.length;i++){
         const asset=exportAssets[i];
         if(!asset.url) continue;
-        const response=await fetch(asset.url);
-        if(!response.ok) throw new Error("Could not download asset " + asset.name + " (HTTP " + response.status + ").");
-        const bytes=new Uint8Array(await response.arrayBuffer());
-        const safeName=safeFileName(asset.name,"asset-"+(i+1)+(asset.format==="svg"?".svg":".png"));
-        files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+String(i+1).padStart(3,"0")+"-"+safeName,data:bytes});
-        downloadedAssets++;
+        try {
+          const response=await fetch(asset.url);
+          if(!response.ok) throw new Error("HTTP " + response.status);
+          const bytes=new Uint8Array(await response.arrayBuffer());
+          const safeName=safeFileName(asset.name,"asset-"+(i+1)+(asset.format==="svg"?".svg":".png"));
+          files.push({name:(asset.format==="svg"?"assets/vectors/":"assets/images/")+String(i+1).padStart(3,"0")+"-"+safeName,data:bytes});
+          downloadedAssets++;
+        } catch (downloadError) {
+          skippedFiles.push({name:asset.name || ("Asset " + (i+1)),reason:downloadError.message || "Download failed"});
+        }
         setGithubProgress({active:uploadToGithub,stage:"Preparing image and vector assets",current:downloadedAssets,total:exportAssets.length,percent:Math.round(3+(downloadedAssets/Math.max(exportAssets.length,1))*4),fileName:safeName});
       }
       if(exportAssets.length && downloadedAssets===0 && !unavailableAssets.length) throw new Error("No image or vector assets could be downloaded. Check the asset storage and try again.");
@@ -853,7 +862,8 @@ export default function FigmaImporter({ session, onSignOut }) {
       if (uploadToGithub) await uploadZipToGithub(bundle);
       else saveBlob(safe+"-bundle.zip",bundle);
       const missingAssetWarning = unavailableAssets.length ? unavailableAssets.length + " image/vector asset(s) could not be recovered because Figma rate-limited the request; their metadata remains in the manifest." : "";
-      if (frameScreenshotWarning || missingAssetWarning) setError([frameScreenshotWarning,missingAssetWarning].filter(Boolean).join(" "));
+      const skippedFileWarning = skippedFiles.length ? skippedFiles.length + " file(s) were skipped during download: " + skippedFiles.map(item => item.name + " (" + item.reason + ")").join(", ") : "";
+      if (frameScreenshotWarning || missingAssetWarning || skippedFileWarning) setError([frameScreenshotWarning,missingAssetWarning,skippedFileWarning].filter(Boolean).join(" "));
     }catch(err){if(uploadToGithub){setGithubProgress({active:false,stage:"Upload failed",current:0,total:0,percent:0,fileName:""});setGithubToast({type:"error",title:"GitHub upload failed",message:err.message||"Unknown upload error"});setError(err.message||"GitHub upload failed.");}else setError("ZIP export failed: "+(err.message||"Unknown error"));}
     finally{setLoading(false);}
   }
@@ -900,7 +910,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Frame: {project.design?.frameName || "All frames"}</small><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
-        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small className="project-frame-label">Frame: <b>{design.frameName || "All frames"}</b> · {design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={()=>setShowAiHandoff(v=>!v)}><Sparkles size={15}/> AI Handoff</button><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="primary-small" onClick={downloadProjectZip} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download full project"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push to GitHub":"Connect GitHub"}</button><div className="more-exports-wrap"><button className="secondary-button more-exports-toggle" onClick={()=>setShowMoreExports(v=>!v)} aria-expanded={showMoreExports}><Layers3 size={15}/> More exports <ChevronDown size={14}/></button>{showMoreExports && <div className="more-exports-menu"><button onClick={()=>{exportJson();setShowMoreExports(false);}}><FileJson size={15}/> Design JSON</button><button onClick={()=>{exportTokens();setShowMoreExports(false);}}><Code2 size={15}/> CSS design tokens</button><button onClick={()=>{exportReact();setShowMoreExports(false);}} disabled={loading}><Code2 size={15}/> React + CSS bundle</button><button onClick={()=>{exportLayerDocs();setShowMoreExports(false);}}><Layers3 size={15}/> Layer documentation (JSON + CSV)</button></div>}</div></div></div>
+        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small className="project-frame-label">Frame: <b>{design.frameName || "All frames"}</b> · {design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={()=>setShowAiHandoff(v=>!v)}><Sparkles size={15}/> AI Handoff</button><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="primary-small" onClick={()=>downloadProjectZip(false)} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download full project"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push to GitHub":"Connect GitHub"}</button><div className="more-exports-wrap"><button className="secondary-button more-exports-toggle" onClick={()=>setShowMoreExports(v=>!v)} aria-expanded={showMoreExports}><Layers3 size={15}/> More exports <ChevronDown size={14}/></button>{showMoreExports && <div className="more-exports-menu"><button onClick={()=>{exportJson();setShowMoreExports(false);}}><FileJson size={15}/> Design JSON</button><button onClick={()=>{exportTokens();setShowMoreExports(false);}}><Code2 size={15}/> CSS design tokens</button><button onClick={()=>{exportReact();setShowMoreExports(false);}} disabled={loading}><Code2 size={15}/> React + CSS bundle</button><button onClick={()=>{exportLayerDocs();setShowMoreExports(false);}}><Layers3 size={15}/> Layer documentation (JSON + CSV)</button></div>}</div></div></div>
         {showAiHandoff && <section className="ai-handoff-panel">
           <div className="ai-handoff-heading"><div><span className="eyebrow">AI-READY DEVELOPMENT PACKAGE</span><h3>Take this design from Figma to a working website</h3><p>Upload the export to GitHub, connect that repository to ChatGPT, then provide the visual references and implementation prompt.</p></div><button className="icon-button" onClick={()=>setShowAiHandoff(false)} aria-label="Close AI handoff"><X size={17}/></button></div>
           <div className="ai-handoff-steps">
