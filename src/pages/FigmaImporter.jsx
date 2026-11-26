@@ -304,6 +304,52 @@ export default function FigmaImporter({ session, onSignOut }) {
     return ordered;
   }
 
+  async function getFrameScreenshots() {
+    const nodes = walk([design?.document]).filter(node => node?.type === "FRAME" && node.id);
+    const unique = [...new Map(nodes.map(node => [node.id, node])).values()].slice(0, 100);
+    if (!unique.length) return [];
+    const previous = design?.frameScreenshots || [];
+    const resolved = new Map();
+
+    const stored = previous.filter(item => item.path && item.stored !== false);
+    if (stored.length) {
+      const refreshed = await callFigmaFunction({
+        action: "refresh_asset_urls",
+        assets: stored.map(({nodeId,name,format,path}) => ({nodeId,name,format,path}))
+      });
+      for (const item of refreshed.assets || []) if (item.url && !item.error) resolved.set(item.nodeId, item);
+    }
+
+    const missing = unique.filter(node => !resolved.has(node.id));
+    if (missing.length) {
+      const fileKey = design?.fileKey || (figmaUrl ? parseFigmaUrl(figmaUrl).fileKey : null);
+      if (!fileKey) throw new Error("Frame screenshots need the original Figma file key.");
+      const result = await callFigmaFunction({
+        action: "export_assets",
+        fileKey,
+        assets: missing.map(node => ({
+          nodeId: node.id,
+          name: "frame-" + String(node.name || "untitled").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,50) + "-" + node.id.replace(/:/g,"-") + ".png",
+          format: "png"
+        }))
+      });
+      for (const item of result.assets || []) if (item.url && !item.error) resolved.set(item.nodeId, item);
+    }
+    const failed = unique.filter(node => !resolved.has(node.id));
+    if (failed.length) throw new Error("Could not save " + failed.length + " frame screenshot(s): " + failed.map(node => node.name || node.id).join(", "));
+    const screenshots = unique.map(node => ({
+      ...resolved.get(node.id),
+      nodeId: node.id,
+      name: resolved.get(node.id).name,
+      frameName: node.name,
+      width: node.absoluteBoundingBox?.width || node.size?.x || null,
+      height: node.absoluteBoundingBox?.height || node.size?.y || null,
+      stored: true
+    }));
+    setDesign(current => current ? ({...current, frameScreenshots: screenshots}) : current);
+    return screenshots;
+  }
+
   async function exportReact() {
     if (!design?.document) { setError("Import a Figma design before exporting React."); return; }
     setLoading(true); setError("");
@@ -688,11 +734,21 @@ export default function FigmaImporter({ session, onSignOut }) {
       const jsx="import React from 'react';\nimport './FigmaExport.css';\nexport default function FigmaExport(){return <main className=\"figma-root\">"+(design.document.children||[]).map(n=>"<section data-layer=\""+String(n.id||"").replace(/"/g,"")+"\">"+(n.type==="TEXT"?String(n.characters||"").replace(/</g,"&lt;"):(n.name||"Layer"))+"</section>").join("")+"</main>;}";
       files.push({name:"code/FigmaExport.jsx",data:jsx},{name:"code/FigmaExport.css",data:cssTokens(allNodes)+"\n.figma-root{position:relative;width:100%;}\n"});
       const exportAssets = await getFreshExportAssets();
+      const frameScreenshots = await getFrameScreenshots();
       files.find(file=>file.name==="assets/asset-manifest.json").data=JSON.stringify(exportAssets,null,2);
+      files.push({name:"design-data/frame-screenshots.json",data:JSON.stringify(frameScreenshots.map(({url,...meta})=>meta),null,2)});
+      files.find(file=>file.name==="README.md").data += "- reference-frames/: high-resolution PNG screenshots of Figma frames for visual AI reference\n- design-data/frame-screenshots.json: frame names, node IDs and dimensions\n";
       files.find(file=>file.name==="design-data/complete-design.json").data=JSON.stringify({...design,assets:exportAssets},null,2);
       const docsWithAssets=describeLayers(design.document,exportAssets);
       files.find(file=>file.name==="design-data/layer-descriptions.json").data=JSON.stringify(docsWithAssets,null,2);
       files.find(file=>file.name==="design-data/layer-descriptions.csv").data=[keys.join(","),...docsWithAssets.map(row=>keys.map(k=>csvEscape(row[k])).join(","))].join("\n");
+      for (let i=0; i<frameScreenshots.length; i++) {
+        const frame = frameScreenshots[i];
+        const response = await fetch(frame.url);
+        if (!response.ok) throw new Error("Could not download frame screenshot " + frame.frameName + " (HTTP " + response.status + ").");
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        files.push({name:"reference-frames/"+String(i+1).padStart(3,"0")+"-"+safeFileName(frame.name,"frame.png"),data:bytes});
+      }
       let downloadedAssets = 0;
       for(let i=0;i<exportAssets.length;i++){
         const asset=exportAssets[i];
