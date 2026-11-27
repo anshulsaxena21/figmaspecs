@@ -13,7 +13,7 @@ function reply(body: unknown, status = 200) {
 }
 function getRateLimitDetails(response: Response) {
   const raw = response.headers.get("Retry-After");
-  const seconds = raw && /^\\d+$/.test(raw.trim()) ? Number(raw.trim()) : null;
+  const seconds = raw ? (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : Number.isFinite(Date.parse(raw)) ? Math.max(0, Math.ceil((Date.parse(raw) - Date.now()) / 1000)) : null) : null;
   return {
     retryAfterSeconds: Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null,
     planTier: response.headers.get("X-Figma-Plan-Tier"),
