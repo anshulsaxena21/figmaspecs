@@ -333,6 +333,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       const { fileKey, nodeId } = parseFigmaUrl(figmaUrl);
       const payload = await callFigmaFunction({ fileKey, nodeId });
       setDesign({ ...payload, fileKey, frameName: nodeId ? (payload.document?.name || "Selected frame") : "All frames" });
+      if (payload.assetWarnings?.length) setError(payload.assetWarnings.join(" "));
       const root = payload.document?.children?.[0] || payload.document;
       if (root?.id) setSelected(root.id);
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
