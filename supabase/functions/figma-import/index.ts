@@ -186,8 +186,8 @@ Deno.serve(async (request: Request) => {
       const output: any[] = [];
       for (const format of ["png", "svg"]) {
         const group = requested.filter((asset: any) => String(asset?.format).toLowerCase() === format);
-        for (let offset = 0; offset < group.length; offset += 80) {
-          const batch = group.slice(offset, offset + 80);
+        for (let offset = 0; offset < group.length; offset += 20) {
+          const batch = group.slice(offset, offset + 20);
           const ids = batch.map((asset: any) => String(asset.nodeId || "").replace(/-/g, ":")).filter(Boolean);
           if (!ids.length) continue;
           const params = new URLSearchParams({ ids: ids.join(","), format, scale: "1" });
