@@ -11,6 +11,16 @@ const corsHeaders = {
 function reply(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
+function getRateLimitDetails(response: Response) {
+  const raw = response.headers.get("Retry-After");
+  const seconds = raw && /^\\d+$/.test(raw.trim()) ? Number(raw.trim()) : null;
+  return {
+    retryAfterSeconds: Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null,
+    planTier: response.headers.get("X-Figma-Plan-Tier"),
+    rateLimitType: response.headers.get("X-Figma-Rate-Limit-Type"),
+    upgradeLink: response.headers.get("X-Figma-Upgrade-Link")
+  };
+}
 function cleanNode(node: any): any {
   const keep = [
     "id","name","type","visible","locked","opacity","blendMode","rotation",
@@ -224,7 +234,7 @@ Deno.serve(async (request: Request) => {
           : fileResponse.status === 429
             ? "Figma rate limit reached. Wait a little and try again."
             : String(filePayload.err || filePayload.message || "Figma could not return this design.");
-      return reply({ message, figmaStatus: fileResponse.status }, fileResponse.status === 429 ? 429 : 400);
+      return reply({ message, figmaStatus: fileResponse.status, ...(fileResponse.status === 429 ? { rateLimit: getRateLimitDetails(fileResponse) } : {}) }, fileResponse.status === 429 ? 429 : 400);
     }
 
     const fileName = filePayload.name || "Figma design";
@@ -349,6 +359,7 @@ Deno.serve(async (request: Request) => {
       document: cleanNode(document),
       assets: storedAssets,
       assetWarnings,
+      ...(typeof assetRateLimit !== "undefined" ? { rateLimit: assetRateLimit } : {}),
       stats
     });
   } catch (error) {
