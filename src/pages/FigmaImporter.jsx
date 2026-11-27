@@ -258,7 +258,13 @@ export default function FigmaImporter({ session, onSignOut }) {
   const [generatedPrompt, setGeneratedPrompt] = useState("");
   const [qualityAuditOpen, setQualityAuditOpen] = useState(false);
 
-  const [figmaRateLimitBlocked, setFigmaRateLimitBlocked] = useState(false);
+  const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  const [rateLimitNow, setRateLimitNow] = useState(Date.now());
+  useEffect(() => {
+    if (!rateLimitInfo?.retryAt) return;
+    const timer = window.setInterval(() => setRateLimitNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [rateLimitInfo?.retryAt]);
   useEffect(() => {
     let alive = true;
     PROJECT_DB_NAME = "figmaspecs-" + session.user.id;
@@ -297,7 +303,15 @@ export default function FigmaImporter({ session, onSignOut }) {
       body: JSON.stringify(body)
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.message || "FigmaSpecs request failed.");
+    if (payload.rateLimit) {
+      const seconds = Number(payload.rateLimit.retryAfterSeconds);
+      setRateLimitInfo({ ...payload.rateLimit, retryAt: Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
+    }
+    if (!response.ok) {
+      const error = new Error(payload.message || "FigmaSpecs request failed.");
+      error.rateLimit = payload.rateLimit || null;
+      throw error;
+    }
     return payload;
   }
 
@@ -337,8 +351,13 @@ export default function FigmaImporter({ session, onSignOut }) {
       const root = payload.document?.children?.[0] || payload.document;
       if (root?.id) setSelected(root.id);
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
-    } catch (err) { setError(err.message || "Something went wrong while importing the design."); }
-    finally { setImporting(false); }
+    } catch (err) {
+      if (err.rateLimit) {
+        const seconds = Number(err.rateLimit.retryAfterSeconds);
+        setRateLimitInfo({ ...err.rateLimit, retryAt: Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
+      }
+      setError(err.message || "Something went wrong while importing the design.");
+    } finally { setImporting(false); }
   }
 
   function exportAssets() {
@@ -948,6 +967,12 @@ export default function FigmaImporter({ session, onSignOut }) {
         <div className="intro-chip"><LockKeyhole size={15}/> Private workspace · {tokenStatus.hasToken ? "Figma connected" : "Connect Figma to begin"}</div>
       </div>
 
+      {rateLimitInfo && <section className="rate-limit-card" role="status">
+        <div className="rate-limit-icon"><CircleAlert size={18}/></div><div className="rate-limit-copy"><b>Figma API rate limit information</b>
+        <p>{rateLimitInfo.retryAt ? (Math.max(0,Math.ceil((rateLimitInfo.retryAt-rateLimitNow)/1000)) > 0 ? "Retry available in about " + Math.floor(Math.max(0,rateLimitInfo.retryAt-rateLimitNow)/60000) + "m " + Math.ceil((Math.max(0,rateLimitInfo.retryAt-rateLimitNow)%60000)/1000) + "s, based on Figma's response." : "Figma's suggested cooldown has elapsed. Availability is not guaranteed; the API may still return 429.") : "Figma did not provide a valid Retry-After value. A remaining daily quota is not available through the API."}</p>
+        <div className="rate-limit-meta">{rateLimitInfo.planTier && <span>File plan: {rateLimitInfo.planTier}</span>}{rateLimitInfo.rateLimitType && <span>Seat limit: {rateLimitInfo.rateLimitType === "low" ? "Viewer / Collab" : rateLimitInfo.rateLimitType === "high" ? "Dev / Full" : rateLimitInfo.rateLimitType}</span>}<span>Remaining daily requests: Not exposed</span></div>
+        {rateLimitInfo.upgradeLink && <a href={rateLimitInfo.upgradeLink} target="_blank" rel="noreferrer">View Figma plan / seat options <ArrowRight size={13}/></a>}</div>
+        <button className="icon-button" onClick={()=>setRateLimitInfo(null)} aria-label="Dismiss rate limit information"><X size={15}/></button></section>}
       <form className="import-panel" onSubmit={importDesign}>
         <div className="import-heading"><div className="import-icon"><Figma size={21}/></div><div><strong>Import a Figma design</strong><small>Paste a design link. Choose a frame with the node-id parameter for a focused import.</small></div></div>
         <div className="import-fields">
@@ -963,7 +988,7 @@ export default function FigmaImporter({ session, onSignOut }) {
       {!design ? <>{savedProjects.length > 0 && <section className="saved-projects"><div className="saved-projects-head"><div><b>Your saved projects</b><small>Private cloud library · {savedProjects.length} projects{!storageReady ? " · Loading…" : ""}</small></div></div><div className="saved-project-list">{savedProjects.map(project => <div className="saved-project-row" key={project.id}><button onClick={() => openSavedProject(project)}><FileJson size={16}/><span><b>{project.name}</b><small>Frame: {project.design?.frameName || "All frames"}</small><small>Saved {new Date(project.savedAt).toLocaleString()}</small></span></button><button aria-label="Remove saved project" onClick={() => removeSavedProject(project.id)}><X size={15}/></button></div>)}</div></section>}
       <div className="empty-state"><div className="empty-illustration"><div className="empty-card card-back"/><div className="empty-card card-front"><Layers3 size={30}/><span/><span/></div><div className="empty-spark spark-one">✳</div><div className="empty-spark spark-two">✦</div></div><h2>Your design workspace is ready</h2><p>Import a Figma file to inspect its structure, typography, colors, measurements and downloadable assets.</p><div className="empty-capabilities"><span><Type size={15}/> Typography</span><span><Palette size={15}/> Colors</span><span><Ruler size={15}/> Spacing</span><span><ImageIcon size={15}/> Assets</span></div></div></>
       : <div className="workspace">
-        <div className="project-heading"><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small className="project-frame-label">Frame: <b>{design.frameName || "All frames"}</b> · {design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div><div className="export-actions"><button className="secondary-button" onClick={()=>setShowAiHandoff(v=>!v)}><Sparkles size={15}/> AI Handoff</button><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="primary-small" onClick={()=>downloadProjectZip(false)} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download full project"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push to GitHub":"Connect GitHub"}</button><div className="more-exports-wrap"><button className="secondary-button more-exports-toggle" onClick={()=>setShowMoreExports(v=>!v)} aria-expanded={showMoreExports}><Layers3 size={15}/> More exports <ChevronDown size={14}/></button>{showMoreExports && <div className="more-exports-menu"><button onClick={()=>{exportJson();setShowMoreExports(false);}}><FileJson size={15}/> Design JSON</button><button onClick={()=>{exportTokens();setShowMoreExports(false);}}><Code2 size={15}/> CSS design tokens</button><button onClick={()=>{exportReact();setShowMoreExports(false);}} disabled={loading}><Code2 size={15}/> React + CSS bundle</button><button onClick={()=>{exportLayerDocs();setShowMoreExports(false);}}><Layers3 size={15}/> Layer documentation (JSON + CSV)</button></div>}</div></div></div>
+        <div className="project-heading"><div className="project-heading-main"><button className="back-to-projects" onClick={()=>{setDesign(null);setSelected(null);setError("");setSaveStatus("");setActiveTab("layers");setQuery("");}}><ArrowRight size={15}/> Back to projects</button><div><div className="eyebrow">IMPORTED FILE</div><h2>{design.name || "Untitled Figma file"}</h2><small className="project-frame-label">Frame: <b>{design.frameName || "All frames"}</b> · {design.lastModified ? "Last modified " + new Date(design.lastModified).toLocaleString() : "Figma design file"} · {counts.layers} layers detected</small></div></div><div className="export-actions"><button className="secondary-button" onClick={()=>setShowAiHandoff(v=>!v)}><Sparkles size={15}/> AI Handoff</button><button className="secondary-button" onClick={saveCurrentProject} disabled={saveStatus === "Saving…"}><Check size={15}/> {saveStatus === "Saving…" ? "Saving…" : "Save project"}</button><button className="primary-small" onClick={()=>downloadProjectZip(false)} disabled={loading}><ArrowDownToLine size={15}/> {loading ? "Building ZIP..." : "Download full project"}</button><button className="secondary-button" onClick={()=>githubConnected && githubRepo ? downloadProjectZip(true) : setGithubUploadOpen(true)} disabled={loading}><Github size={15}/> {githubConnected?"Push to GitHub":"Connect GitHub"}</button><div className="more-exports-wrap"><button className="secondary-button more-exports-toggle" onClick={()=>setShowMoreExports(v=>!v)} aria-expanded={showMoreExports}><Layers3 size={15}/> More exports <ChevronDown size={14}/></button>{showMoreExports && <div className="more-exports-menu"><button onClick={()=>{exportJson();setShowMoreExports(false);}}><FileJson size={15}/> Design JSON</button><button onClick={()=>{exportTokens();setShowMoreExports(false);}}><Code2 size={15}/> CSS design tokens</button><button onClick={()=>{exportReact();setShowMoreExports(false);}} disabled={loading}><Code2 size={15}/> React + CSS bundle</button><button onClick={()=>{exportLayerDocs();setShowMoreExports(false);}}><Layers3 size={15}/> Layer documentation (JSON + CSV)</button></div>}</div></div></div>
         {showAiHandoff && <section className="ai-handoff-panel">
           <div className="ai-handoff-heading"><div><span className="eyebrow">AI-READY DEVELOPMENT PACKAGE</span><h3>Take this design from Figma to a working website</h3><p>Upload the export to GitHub, connect that repository to ChatGPT, then provide the visual references and implementation prompt.</p></div><button className="icon-button" onClick={()=>setShowAiHandoff(false)} aria-label="Close AI handoff"><X size={17}/></button></div>
           <div className="ai-handoff-steps">
