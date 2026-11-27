@@ -304,8 +304,9 @@ export default function FigmaImporter({ session, onSignOut }) {
     });
     const payload = await response.json().catch(() => ({}));
     if (payload.rateLimit) {
-      const seconds = Number(payload.rateLimit.retryAfterSeconds);
-      setRateLimitInfo({ ...payload.rateLimit, retryAt: Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
+      const rawSeconds = payload.rateLimit.retryAfterSeconds;
+      const seconds = rawSeconds == null ? null : Number(rawSeconds);
+      setRateLimitInfo({ ...payload.rateLimit, retryAt: seconds !== null && Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
     }
     if (!response.ok) {
       const error = new Error(payload.message || "FigmaSpecs request failed.");
@@ -353,8 +354,9 @@ export default function FigmaImporter({ session, onSignOut }) {
       setExpanded({ [payload.document?.id]: true, [root?.id]: true });
     } catch (err) {
       if (err.rateLimit) {
-        const seconds = Number(err.rateLimit.retryAfterSeconds);
-        setRateLimitInfo({ ...err.rateLimit, retryAt: Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
+        const rawSeconds = err.rateLimit.retryAfterSeconds;
+        const seconds = rawSeconds == null ? null : Number(rawSeconds);
+        setRateLimitInfo({ ...err.rateLimit, retryAt: seconds !== null && Number.isFinite(seconds) && seconds >= 0 ? Date.now() + seconds * 1000 : null });
       }
       setError(err.message || "Something went wrong while importing the design.");
     } finally { setImporting(false); }
