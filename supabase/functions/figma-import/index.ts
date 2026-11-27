@@ -194,7 +194,7 @@ Deno.serve(async (request: Request) => {
           const imageResponse = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
           const imagePayload = await imageResponse.json().catch(() => ({}));
           if (imageResponse.status === 429) {
-            return reply({ message: `Figma is temporarily rate-limiting asset regeneration. Please try again later; avoid repeated requests.`, figmaStatus: 429 }, 429);
+            return reply({ message: "Figma is temporarily rate-limiting asset regeneration. Please try again after the indicated cooldown.", figmaStatus: 429, rateLimit: getRateLimitDetails(imageResponse) }, 429);
           }
           if (!imageResponse.ok) throw new Error("Figma could not regenerate " + format.toUpperCase() + " assets (HTTP " + imageResponse.status + "): " + String(imagePayload.err || imagePayload.message || "Unknown Figma API error"));
           for (const asset of batch) {
