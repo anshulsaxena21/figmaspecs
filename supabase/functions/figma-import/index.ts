@@ -363,7 +363,7 @@ Deno.serve(async (request: Request) => {
       version: filePayload.version || null,
       document: cleanNode(document),
       assets: storedAssets,
-      assetCandidates: exportCandidates.map(({node,format}) => ({
+      assetCandidates: exportCandidates.filter(({node}) => !storedAssets.some(asset => asset.nodeId === node.id && asset.stored)).map(({node,format}) => ({
         nodeId: node.id,
         name: String(node.name || "asset").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + "-" + node.id.replace(/:/g, "-") + "." + format,
         format
