@@ -184,8 +184,7 @@ Deno.serve(async (request: Request) => {
           const imageResponse = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
           const imagePayload = await imageResponse.json().catch(() => ({}));
           if (imageResponse.status === 429) {
-            const retryAfter = imageResponse.headers.get("Retry-After") || "60";
-            return reply({ message: `Figma rate limit reached while regenerating ${format.toUpperCase()} assets. Please wait ${retryAfter} seconds before retrying; do not repeatedly refresh or re-import.`, figmaStatus: 429, retryAfterSeconds: Number(retryAfter) || 60 }, 429);
+            return reply({ message: `Figma is temporarily rate-limiting asset regeneration. Please try again later; avoid repeated requests.`, figmaStatus: 429 }, 429);
           }
           if (!imageResponse.ok) throw new Error("Figma could not regenerate " + format.toUpperCase() + " assets (HTTP " + imageResponse.status + "): " + String(imagePayload.err || imagePayload.message || "Unknown Figma API error"));
           for (const asset of batch) {
@@ -267,28 +266,21 @@ Deno.serve(async (request: Request) => {
     const assetIds = exportCandidates.map(item => item.node.id);
     const imageMap: Record<string, string> = {};
     const assetWarnings: string[] = [];
+    let assetRateLimited = false;
     for (const format of ["png", "svg"] as const) {
+      if (assetRateLimited) break;
       const ids = exportCandidates.filter(item => item.format === format).map(item => item.node.id);
-      for (let offset = 0; offset < ids.length; offset += 80) {
-        const batchIds = ids.slice(offset, offset + 80);
+      // Keep render requests deliberately small to reduce burst pressure on Figma.
+      for (let offset = 0; offset < ids.length; offset += 20) {
+        const batchIds = ids.slice(offset, offset + 20);
         if (!batchIds.length) continue;
-        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: format === "png" ? "1" : "1" });
-        let response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
-        let payload = await response.json().catch(() => ({}));
+        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: "1" });
+        const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+        const payload = await response.json().catch(() => ({}));
         if (response.status === 429) {
-          const retryHeader = response.headers.get("Retry-After");
-          const retrySeconds = retryHeader ? Number(retryHeader) : 0;
-          if (retrySeconds > 0 && retrySeconds <= 3) {
-            await new Promise(resolve => setTimeout(resolve, retrySeconds * 1000));
-            response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
-            payload = await response.json().catch(() => ({}));
-          }
-        }
-        if (response.status === 429) {
-          const retryHeader = response.headers.get("Retry-After");
-          const retrySeconds = retryHeader && Number(retryHeader) > 0 ? Number(retryHeader) : 60;
-          assetWarnings.push(`Figma temporarily rate-limited ${format.toUpperCase()} asset rendering. The design was imported, but these assets were skipped. Wait about ${retrySeconds} seconds before importing again.`);
-          continue;
+          assetWarnings.push("Figma temporarily rate-limited asset rendering. The design data was imported, but some images and vectors were skipped. Avoid repeated imports; try the asset export again later.");
+          assetRateLimited = true;
+          break;
         }
         if (!response.ok) {
           assetWarnings.push(`Figma could not render ${format.toUpperCase()} assets (HTTP ${response.status}). The design was imported, but these assets were skipped.`);
