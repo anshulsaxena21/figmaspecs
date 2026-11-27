@@ -266,15 +266,34 @@ Deno.serve(async (request: Request) => {
     const vectorNodeIds = exportCandidates.filter(item => item.format === "svg").map(item => item.node.id);
     const assetIds = exportCandidates.map(item => item.node.id);
     const imageMap: Record<string, string> = {};
+    const assetWarnings: string[] = [];
     for (const format of ["png", "svg"] as const) {
       const ids = exportCandidates.filter(item => item.format === format).map(item => item.node.id);
       for (let offset = 0; offset < ids.length; offset += 80) {
         const batchIds = ids.slice(offset, offset + 80);
         if (!batchIds.length) continue;
-        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: format === "png" ? "2" : "1" });
-        const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(`Figma asset rendering failed for ${format.toUpperCase()} (HTTP ${response.status}): ${String(payload.err || payload.message || "Unknown Figma API error")}`);
+        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: format === "png" ? "1" : "1" });
+        let response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+        let payload = await response.json().catch(() => ({}));
+        if (response.status === 429) {
+          const retryHeader = response.headers.get("Retry-After");
+          const retrySeconds = retryHeader ? Number(retryHeader) : 0;
+          if (retrySeconds > 0 && retrySeconds <= 3) {
+            await new Promise(resolve => setTimeout(resolve, retrySeconds * 1000));
+            response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+            payload = await response.json().catch(() => ({}));
+          }
+        }
+        if (response.status === 429) {
+          const retryHeader = response.headers.get("Retry-After");
+          const retrySeconds = retryHeader && Number(retryHeader) > 0 ? Number(retryHeader) : 60;
+          assetWarnings.push(`Figma temporarily rate-limited ${format.toUpperCase()} asset rendering. The design was imported, but these assets were skipped. Wait about ${retrySeconds} seconds before importing again.`);
+          continue;
+        }
+        if (!response.ok) {
+          assetWarnings.push(`Figma could not render ${format.toUpperCase()} assets (HTTP ${response.status}). The design was imported, but these assets were skipped.`);
+          continue;
+        }
         Object.assign(imageMap, payload.images || {});
       }
     }
@@ -337,6 +356,7 @@ Deno.serve(async (request: Request) => {
       version: filePayload.version || null,
       document: cleanNode(document),
       assets: storedAssets,
+      assetWarnings,
       stats
     });
   } catch (error) {
