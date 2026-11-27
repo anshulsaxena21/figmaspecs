@@ -274,32 +274,36 @@ Deno.serve(async (request: Request) => {
     const imageNodeIds = exportCandidates.filter(item => item.format === "png").map(item => item.node.id);
     const vectorNodeIds = exportCandidates.filter(item => item.format === "svg").map(item => item.node.id);
     const assetIds = exportCandidates.map(item => item.node.id);
+    const includeAssets = body.includeAssets !== false;
     const imageMap: Record<string, string> = {};
     const assetWarnings: string[] = [];
     let assetRateLimited = false;
-    for (const format of ["png", "svg"] as const) {
-      if (assetRateLimited) break;
-      const ids = exportCandidates.filter(item => item.format === format).map(item => item.node.id);
-      // Keep render requests deliberately small to reduce burst pressure on Figma.
-      for (let offset = 0; offset < ids.length; offset += 20) {
-        const batchIds = ids.slice(offset, offset + 20);
-        if (!batchIds.length) continue;
-        const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: "1" });
-        const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
-        const payload = await response.json().catch(() => ({}));
-        if (response.status === 429) {
-          assetWarnings.push("Figma temporarily rate-limited asset rendering. The design data was imported, but some images and vectors were skipped. Avoid repeated imports; try the asset export again later.");
-          assetRateLimited = true;
-          var assetRateLimit = getRateLimitDetails(response);
-          break;
+    if (includeAssets) {
+      for (const format of ["png", "svg"] as const) {
+        if (assetRateLimited) break;
+        const ids = exportCandidates.filter(item => item.format === format).map(item => item.node.id);
+        // Keep render requests deliberately small to reduce burst pressure on Figma.
+        for (let offset = 0; offset < ids.length; offset += 20) {
+          const batchIds = ids.slice(offset, offset + 20);
+          if (!batchIds.length) continue;
+          const params = new URLSearchParams({ ids: batchIds.join(","), format, scale: "1" });
+          const response = await fetch(`${FIGMA_API}/images/${fileKey}?${params}`, { headers: figmaHeaders });
+          const payload = await response.json().catch(() => ({}));
+          if (response.status === 429) {
+            assetWarnings.push("Figma temporarily rate-limited asset rendering. The design data was imported, but some images and vectors were skipped. Avoid repeated imports; try the asset export again later.");
+            assetRateLimited = true;
+            var assetRateLimit = getRateLimitDetails(response);
+            break;
+          }
+          if (!response.ok) {
+            assetWarnings.push(`Figma could not render ${format.toUpperCase()} assets (HTTP ${response.status}). The design was imported, but these assets were skipped.`);
+            continue;
+          }
+          Object.assign(imageMap, payload.images || {});
         }
-        if (!response.ok) {
-          assetWarnings.push(`Figma could not render ${format.toUpperCase()} assets (HTTP ${response.status}). The design was imported, but these assets were skipped.`);
-          continue;
-        }
-        Object.assign(imageMap, payload.images || {});
       }
-    }
+  
+      }
 
     const renderAssets = assetIds.map(id => {
       const candidate = candidateById.get(id);
@@ -359,6 +363,12 @@ Deno.serve(async (request: Request) => {
       version: filePayload.version || null,
       document: cleanNode(document),
       assets: storedAssets,
+      assetCandidates: exportCandidates.map(({node,format}) => ({
+        nodeId: node.id,
+        name: String(node.name || "asset").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + "-" + node.id.replace(/:/g, "-") + "." + format,
+        format
+      })),
+      assetsIncluded: includeAssets,
       assetWarnings,
       ...(typeof assetRateLimit !== "undefined" ? { rateLimit: assetRateLimit } : {}),
       stats
