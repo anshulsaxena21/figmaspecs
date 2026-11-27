@@ -290,6 +290,7 @@ Deno.serve(async (request: Request) => {
         if (response.status === 429) {
           assetWarnings.push("Figma temporarily rate-limited asset rendering. The design data was imported, but some images and vectors were skipped. Avoid repeated imports; try the asset export again later.");
           assetRateLimited = true;
+          var assetRateLimit = getRateLimitDetails(response);
           break;
         }
         if (!response.ok) {
